@@ -9,7 +9,7 @@ resolution-markers = [
 
 [[package]]
 name = "agntrick"
-version = "0.2.9"
+version = "0.4.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "croniter" },
@@ -47,31 +47,10 @@ dependencies = [
     { name = "typer" },
     { name = "youtube-transcript-api" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/fa/1e/8114e91674a4574fc0e84a52d8f4126c80ef3c7ab7b0d61205e17c3c9288/agntrick-0.2.9.tar.gz", hash = "sha256:6667c2e6301f95ec470fa02f2b351db41db875fb830257a9e312d0ce9e34a0f6", size = 68769, upload-time = "2026-03-14T10:58:20.56Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9e/ba/f783f7017d1ef4e038112767005c3eb48e05c2319307b07c415dc0ba5f82/agntrick-0.4.1.tar.gz", hash = "sha256:d2eb61b029f08b040f25d79ff953dbfc1ab3504285a5ad80734a3c36a06861d3", size = 68762, upload-time = "2026-03-14T17:46:34.585Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/47/53/ab3242956e1a94a7683e6b7b8ba4e81f3832e37d21751b7b605e536f11e4/agntrick-0.2.9-py3-none-any.whl", hash = "sha256:c9c03a6ca867af9a3c0d13fb4521d9e3d824de884d784d6927a5a9bbe5bb41f8", size = 61687, upload-time = "2026-03-14T10:58:18.434Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/68/d98ebcefe5c353c7791a996d5e078767272727630f5b776d6b6dfb0b50a1/agntrick-0.4.1-py3-none-any.whl", hash = "sha256:97546be4cbf76872182162feeb45c1e87b944f2b6dc15a1cbaf8702648fe2318", size = 61684, upload-time = "2026-03-14T17:46:33.146Z" },
 ]
-
-[[package]]
-name = "agntrick-storage"
-version = "0.1.0"
-source = { editable = "../agents/packages/agntrick-storage" }
-dependencies = [
-    { name = "croniter" },
-    { name = "dateparser" },
-    { name = "pydantic" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "croniter", specifier = ">=3.0.0" },
-    { name = "dateparser", specifier = ">=1.2.0" },
-    { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0.0" },
-]
-provides-extras = ["dev"]
 
 [[package]]
 name = "agntrick-whatsapp"
@@ -79,7 +58,6 @@ version = "0.3.5"
 source = { editable = "." }
 dependencies = [
     { name = "agntrick" },
-    { name = "agntrick-storage" },
     { name = "croniter" },
     { name = "dateparser" },
     { name = "ffmpeg-python" },
@@ -92,6 +70,7 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "agntrick" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
@@ -104,7 +83,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agntrick", specifier = ">=0.2.9" },
-    { name = "agntrick-storage", editable = "../agents/packages/agntrick-storage" },
     { name = "croniter", specifier = ">=6.0.0" },
     { name = "dateparser", specifier = ">=1.3.0" },
     { name = "ffmpeg-python", specifier = ">=0.2.0" },
@@ -117,6 +95,7 @@ requires-dist = [
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "agntrick" },
     { name = "mypy", specifier = ">=1.19.1" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },

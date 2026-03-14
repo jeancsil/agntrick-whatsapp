@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 from typing import cast
 
-from agntrick_storage.database import Database  # type: ignore[import-untyped]
+from agntrick.storage.database import Database  # type: ignore[import-untyped]
 
 from ..constants import DATA_DIR
 

@@ -309,9 +309,9 @@ class WhatsAppChannel:
             del self._db
 
     def _get_db_connection(self) -> sqlite3.Connection:
-        """Get or create a thread-local SQLite connection via agntrick_storage."""
+        """Get or create a thread-local SQLite connection via agntrick.storage."""
         if not hasattr(self, "_db"):
-            from agntrick_storage.database import Database  # type: ignore[import-untyped]
+            from agntrick.storage.database import Database  # type: ignore[import-untyped]
 
             self._db = Database(self._db_path)
 
