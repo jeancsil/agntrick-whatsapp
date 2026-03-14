@@ -2,8 +2,37 @@
 
 import pytest
 
-from agntrick_whatsapp.config import WhatsAppConfig, WhatsAppRouterConfig
+from agntrick_whatsapp.base import BaseWhatsAppMessage
+from agntrick_whatsapp.channel import WhatsAppChannel
 from agntrick_whatsapp.router import WhatsAppRouterAgent
+
+
+class MockWhatsAppChannel(WhatsAppChannel):
+    """Mock channel for testing."""
+
+    def __init__(self) -> None:
+        self.messages_sent = []
+        self.initialize_called = False
+
+    async def initialize(self) -> None:
+        """Mock initialize."""
+        self.initialize_called = True
+
+    async def listen(self, callback) -> None:
+        """Mock listen - doesn't actually listen."""
+        pass
+
+    async def shutdown(self) -> None:
+        """Mock shutdown."""
+        pass
+
+    async def send_message(self, to_number: str, text: str) -> None:
+        """Mock send_message."""
+        self.messages_sent.append((to_number, text))
+
+    async def receive_message(self) -> BaseWhatsAppMessage | None:
+        """Mock receive_message."""
+        return None
 
 
 @pytest.mark.asyncio
@@ -12,155 +41,58 @@ class TestWhatsAppRouterAgent:
 
     async def test_init(self):
         """Test router initialization."""
-        config = WhatsAppRouterConfig(
-            whatsapp=WhatsAppConfig(access_token="EATestToken123", phone_number_id="12345", verify_token="test_verify"),
-            storage={"type": "memory"},
-        )
-        router = WhatsAppRouterAgent(config)
+        channel = MockWhatsAppChannel()
+        router = WhatsAppRouterAgent(channel)
         assert router is not None
+        assert router.channel is channel
 
-    async def test_process_text_message(self):
-        """Test processing a text message."""
-        config = WhatsAppRouterConfig(
-            whatsapp=WhatsAppConfig(access_token="EATestToken123", phone_number_id="12345", verify_token="test_verify"),
-            storage={"type": "memory"},
-        )
-        router = WhatsAppRouterAgent(config)
-        message = {
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "id": "msg1",
-                                        "from": "12345",
-                                        "timestamp": "1234567890",
-                                        "type": "text",
-                                        "text": {"body": "Hello"},
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            ]
-        }
+    async def test_handle_text_message(self):
+        """Test handling a text message via _handle_message."""
+        channel = MockWhatsAppChannel()
+        router = WhatsAppRouterAgent(channel)
 
-        result = await router.process_message(message)
-        assert result["status"] in ["handled", "text", "success"]
+        # Simulate a bridge-format message
+        message = {"sender_id": "12345", "text": "Hello"}
 
-    async def test_process_command_message(self):
-        """Test processing a command message."""
-        config = WhatsAppRouterConfig(
-            whatsapp=WhatsAppConfig(access_token="EATestToken123", phone_number_id="12345", verify_token="test_verify"),
-            storage={"type": "memory"},
-        )
-        router = WhatsAppRouterAgent(config)
-        message = {
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "id": "msg1",
-                                        "from": "12345",
-                                        "timestamp": "1234567890",
-                                        "type": "text",
-                                        "text": {"body": "/help"},
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            ]
-        }
+        await router._handle_message(message)
+        assert len(channel.messages_sent) == 1
+        assert channel.messages_sent[0][0] == "12345"
 
-        result = await router.process_message(message)
-        assert result["status"] in ["success", "handled"]
+    async def test_handle_command_message(self):
+        """Test handling a command message via _handle_message."""
+        channel = MockWhatsAppChannel()
+        router = WhatsAppRouterAgent(channel)
 
-    async def test_process_media_message(self):
-        """Test processing a media message."""
-        config = WhatsAppRouterConfig(
-            whatsapp=WhatsAppConfig(access_token="EATestToken123", phone_number_id="12345", verify_token="test_verify"),
-            storage={"type": "memory"},
-        )
-        router = WhatsAppRouterAgent(config)
-        message = {
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "id": "msg1",
-                                        "from": "12345",
-                                        "timestamp": "1234567890",
-                                        "type": "image",
-                                        "image": {"url": "http://example.com/image.jpg"},
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            ]
-        }
+        # Command message
+        message = {"sender_id": "12345", "text": "/help"}
 
-        result = await router.process_message(message)
-        # Media messages should return None from receive_message, so default response
-        assert "handled" in result["status"]
+        await router._handle_message(message)
+        assert len(channel.messages_sent) == 1
+        # Commands are not implemented, so it says "Command not implemented"
+        assert "Command not implemented" in channel.messages_sent[0][1]
 
-    async def test_process_unknown_message_type(self):
-        """Test processing an unknown message type."""
-        config = WhatsAppRouterConfig(
-            whatsapp=WhatsAppConfig(access_token="EATestToken123", phone_number_id="12345", verify_token="test_verify"),
-            storage={"type": "memory"},
-        )
-        router = WhatsAppRouterAgent(config)
-        message = {
-            "entry": [
-                {
-                    "changes": [
-                        {
-                            "value": {
-                                "messages": [
-                                    {
-                                        "id": "msg1",
-                                        "from": "12345",
-                                        "timestamp": "1234567890",
-                                        "type": "unknown",
-                                        "text": {"body": "test"},
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            ]
-        }
+    async def test_send_response(self):
+        """Test the _send_response method."""
+        channel = MockWhatsAppChannel()
+        router = WhatsAppRouterAgent(channel)
 
-        result = await router.process_message(message)
-        assert result["status"] == "handled"
+        incoming = {"sender_id": "12345", "text": "test"}
+        await router._send_response(incoming, "Response message")
 
-    async def test_register_agent(self):
-        """Test registering a new agent."""
-        config = WhatsAppRouterConfig(
-            whatsapp=WhatsAppConfig(access_token="EATestToken123", phone_number_id="12345", verify_token="test_verify"),
-            storage={"type": "memory"},
-        )
-        router = WhatsAppRouterAgent(config)
+        assert len(channel.messages_sent) == 1
+        assert channel.messages_sent[0][0] == "12345"
+        assert channel.messages_sent[0][1] == "Response message"
 
-        class TestAgent:
-            commands = ["test"]
+    async def test_router_not_running_initially(self):
+        """Test router is not running when created."""
+        channel = MockWhatsAppChannel()
+        router = WhatsAppRouterAgent(channel)
+        assert not router._running
 
-            async def process_message(self, message, context):
-                return {"response": "test response"}
-
-        router.register_agent("test", TestAgent)
-        assert "test" in router.agent_registry
+    async def test_shutdown_event(self):
+        """Test shutdown event can be set."""
+        channel = MockWhatsAppChannel()
+        router = WhatsAppRouterAgent(channel)
+        assert not router._shutdown_event.is_set()
+        router._shutdown_event.set()
+        assert router._shutdown_event.is_set()

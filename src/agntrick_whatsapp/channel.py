@@ -6,18 +6,23 @@ This module conditionally imports the appropriate implementation based on availa
 """
 
 import asyncio
+import logging
+from datetime import datetime
 from typing import Any, Optional, Union
+
+from .base import BaseWhatsAppMessage, TextMessage, WhatsAppChannelBase, WhatsAppMessageStatus
+
+logger = logging.getLogger(__name__)
 
 # Try to import bridge implementation (whatsmeow/QR code login)
 # If available, use it for personal WhatsApp accounts
 try:
     from . import channel_bridge as bridge_impl
+
     _BRIDGE_AVAILABLE = True
 except ImportError:
     # Bridge not available, only Business API
     _BRIDGE_AVAILABLE = False
-
-from .base import BaseWhatsAppMessage, TextMessage, WhatsAppChannelBase, WhatsAppMessageStatus
 
 
 class WhatsAppChannel(WhatsAppChannelBase):
@@ -166,21 +171,17 @@ class WhatsAppChannel(WhatsAppChannelBase):
 
     async def _send_bridge_message(self, to_number: str, message: Union[str, Any]) -> str:
         """Send message using Bridge/QR Code (neonize)."""
-        # Convert string messages to OutgoingMessage format
+        # The bridge's send() method returns a jid string
+        # We need to pass a dict with appropriate keys
         if isinstance(message, str):
             message_dict = {"text": message, "recipient_id": to_number}
-        elif isinstance(message, dict) and "recipient_id" in message:
+        elif isinstance(message, dict) and "text" in message:
             message_dict = message
         else:
             raise ValueError(f"Unsupported message type: {type(message)}")
 
-        # For dict with recipient_id, send directly; otherwise wrap
-        if isinstance(message, dict) and "text" in message:
-            outgoing = self._bridge.send(message_dict)
-        else:
-            outgoing = self._bridge.send({"text": str(message), "recipient_id": to_number})
-
-        return outgoing.get("message_id", "")
+        # The bridge send() returns a jid (string), not a dict
+        return await self._bridge.send(message_dict)
 
     async def receive_message(self, message_data: dict[str, Any]) -> Optional[BaseWhatsAppMessage]:
         """Process incoming message data.
@@ -251,6 +252,41 @@ class WhatsAppChannel(WhatsAppChannelBase):
             return None
         else:
             raise RuntimeError(f"Unknown mode: {self._mode}")
+
+    async def initialize(self) -> None:
+        """Initialize the channel.
+
+        Delegates to the appropriate implementation based on mode.
+        """
+        if self._mode == "bridge" and hasattr(self, "_bridge") and hasattr(self._bridge, "initialize"):
+            await self._bridge.initialize()
+        # Business API mode doesn't need initialization
+
+    async def listen(self, callback: Any) -> None:
+        """Start listening for incoming messages.
+
+        This method handles both modes:
+        - Bridge mode: Starts listening via the bridge implementation
+        - Business API mode: Sets up a callback for webhook messages
+
+        Args:
+            callback: A function to call when a new message arrives.
+        """
+        if self._mode == "bridge" and hasattr(self, "_bridge") and hasattr(self._bridge, "listen"):
+            await self._bridge.listen(callback)
+        else:
+            # For Business API mode, we set the callback but don't start listening
+            # because webhooks are handled externally
+            self._webhook_callback = callback
+
+    async def shutdown(self) -> None:
+        """Shutdown the channel.
+
+        Delegates to the appropriate implementation based on mode.
+        """
+        if self._mode == "bridge" and hasattr(self, "_bridge") and hasattr(self._bridge, "shutdown"):
+            await self._bridge.shutdown()
+        # Business API mode doesn't need explicit shutdown
 
     async def _simulate_api_call(self, payload: dict[str, Any]) -> None:
         """Simulate API call to WhatsApp."""

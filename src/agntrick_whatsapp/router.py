@@ -7,12 +7,11 @@ This version supports both:
 
 import asyncio
 import logging
-from datetime import datetime, UTC
 from typing import Any, Dict, List
 
 from .base import BaseWhatsAppMessage
 from .channel import WhatsAppChannel
-from .commands import CommandHandler, CommandParser
+from .commands import CommandParser
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +119,7 @@ class WhatsAppRouterAgent:
         - Business API: Dict with 'entry', 'changes', etc.
         - Bridge: BaseWhatsAppMessage with text, sender_id, etc.
         """
-        self.logger.info(f"Processing message: {incoming}")
+        logger.info(f"Processing message: {incoming}")
 
         try:
             # Check if we have text content
@@ -131,7 +130,7 @@ class WhatsAppRouterAgent:
                 # (works with both implementations)
                 parser = CommandParser()
                 command = parser.parse(message_text)
-                self.logger.info(f"Parsed command: {command}")
+                logger.info(f"Parsed command: {command}")
 
                 # Handle commands
                 if command.get("command"):
@@ -145,14 +144,14 @@ class WhatsAppRouterAgent:
                 await self._send_response(incoming, response)
 
         except Exception as e:
-            self.logger.error(f"Error handling message: {e}")
+            logger.error(f"Error handling message: {e}")
 
             try:
                 # Send error response if possible
                 if isinstance(incoming, dict) and "sender_id" in incoming:
                     await self._send_response(incoming, "Sorry, I encountered an error processing your message.")
             except Exception as send_error:
-                self.logger.error(f"Failed to send error response: {send_error}")
+                logger.error(f"Failed to send error response: {send_error}")
 
     async def _send_response(self, incoming: Any, response: str) -> None:
         """Send a response message through the channel.
@@ -166,14 +165,14 @@ class WhatsAppRouterAgent:
         # Get recipient based on incoming format
         if isinstance(incoming, dict):
             recipient_id = incoming.get("sender_id", "")
-            text = incoming.get("text", response)
+            text = response
         elif isinstance(incoming, BaseWhatsAppMessage):
             recipient_id = incoming.to_number
             text = response
         else:
-            self.logger.warning(f"Unknown incoming format: {type(incoming)}")
+            logger.warning(f"Unknown incoming format: {type(incoming)}")
             return
 
         # Send through the channel
         await self.channel.send_message(recipient_id, text)
-        self.logger.info(f"Response sent to {recipient_id}")
+        logger.info(f"Response sent to {recipient_id}")

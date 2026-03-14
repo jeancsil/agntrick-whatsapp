@@ -9,8 +9,6 @@ and personal WhatsApp accounts (not Business API).
 """
 
 import asyncio
-import contextlib
-import hashlib
 import logging
 import os
 import sqlite3
@@ -19,11 +17,36 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
+logger = logging.getLogger(__name__)
+
+
+class _ThreadLocalDB(threading.local):
+    """Thread-local storage for database connections with type hints."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.conn: sqlite3.Connection | None = None
+
+
+class ConfigurationError(Exception):
+    """Raised when channel configuration is invalid."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args)
+
+
+class ChannelError(Exception):
+    """Raised when channel operations fail."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args)
+
+
 try:
     from neonize.client import NewClient  # type: ignore
     from neonize.events import MessageEv  # type: ignore
     from neonize.utils import ChatPresence, ChatPresenceMedia  # type: ignore
-    from neonize.utils.jid import Jid2String, build_jid  # type: ignore
+    from neonize.utils.jid import build_jid  # type: ignore
 
     _NEONIZE_IMPORT_ERROR: Exception | None = None
 except Exception as import_error:  # pragma: no cover - depends on system packages
@@ -101,7 +124,7 @@ class WhatsAppChannel:
 
         # Message deduplication using SQLite
         self._db_path = self.storage_path / "processed_messages.db"
-        self._db_local = threading.local()
+        self._db_local = _ThreadLocalDB()
         self._db_lock = threading.Lock()
 
         # Validate storage path
@@ -169,9 +192,7 @@ class WhatsAppChannel:
             jid: The JID to stop typing indicator for.
         """
         if not self.typing_indicators or self._client is None or jid not in self._typing_jids:
-            logger.debug(
-                f"Skipping stop typing for {jid}: in_jids={jid in self._typing_jids}"
-            )
+            logger.debug(f"Skipping stop typing for {jid}: in_jids={jid in self._typing_jids}")
             return
 
         # Enforce minimum typing duration
@@ -268,6 +289,33 @@ class WhatsAppChannel:
                 f"Failed to initialize neonize client: {e}",
                 channel_name="whatsapp",
             ) from e
+
+    def _init_deduplication_db(self) -> None:
+        """Initialize the deduplication database."""
+        with self._db_lock:
+            conn = self._get_db_connection()
+            conn.execute("VACUUM")
+            conn.commit()
+
+    def _on_message_event(self, event: Any) -> None:
+        """Handle incoming message events from neonize."""
+        if self._message_callback:
+            self._message_callback(event)
+
+    def _restore_working_directory(self) -> None:
+        """Restore the original working directory."""
+        if self._original_dir and Path.cwd() != self._original_dir:
+            try:
+                os.chdir(self._original_dir)
+                logger.debug(f"Restored working directory to: {self._original_dir}")
+            except OSError as e:
+                logger.error(f"Failed to restore working directory: {e}")
+
+    def _close_deduplication_db(self) -> None:
+        """Close the deduplication database connection."""
+        if hasattr(self._db_local, "conn") and self._db_local.conn is not None:
+            self._db_local.conn.close()
+            self._db_local.conn = None
 
     def _get_db_connection(self) -> sqlite3.Connection:
         """Get or create a thread-local SQLite connection.
@@ -434,7 +482,7 @@ class WhatsAppChannel:
                 await loop.run_in_executor(None, self._client.send_message, jid, message.text)
 
             logger.info("Message sent")
-            return jid
+            return jid  # type: ignore[no-any-return]
 
         except Exception as e:
             raise ChannelError(
@@ -449,6 +497,7 @@ class WhatsAppChannel:
 
         # Download media from URL
         import httpx
+
         async with httpx.AsyncClient() as http_client:
             response = await http_client.get(media_url)
             response.raise_for_status()
