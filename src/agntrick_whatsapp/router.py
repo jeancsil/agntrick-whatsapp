@@ -1,191 +1,179 @@
-"""WhatsAppRouterAgent for routing messages to appropriate agents."""
+"""WhatsAppRouterAgent for routing messages to appropriate agents.
 
-from datetime import datetime
+This version supports both:
+- Business API mode (WhatsApp Business API with access_token)
+- Bridge mode (whatsmeow/QR Code with storage_path, allowed_contact)
+"""
+
+import asyncio
+import logging
+from datetime import datetime, UTC
 from typing import Any, Dict, List
 
 from .base import BaseWhatsAppMessage
 from .channel import WhatsAppChannel
 from .commands import CommandHandler, CommandParser
-from .config import WhatsAppRouterConfig
+
+logger = logging.getLogger(__name__)
+
+# Constants
+SCHEDULER_INTERVAL_SECONDS = 10
+
+
+# System prompts
+DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant communicating through WhatsApp.
+Be concise and friendly in your responses.
+Avoid overly long explanations.
+Use emojis occasionally to be more conversational.
+If you need to show code or data, use formatted text blocks.
+Focus on being helpful and direct.
+"""
+
+# Router initialization now accepts a Channel object directly
+# The channel can be either Business API or Bridge implementation
+# and will provide the appropriate methods (send, listen, shutdown, initialize)
 
 
 class WhatsAppRouterAgent:
-    """Agent that routes WhatsApp messages to appropriate handlers."""
+    """Agent that routes WhatsApp messages to appropriate handlers.
 
-    def __init__(self, config: WhatsAppRouterConfig) -> None:
-        self.config = config
-        self.channel = WhatsAppChannel(config.whatsapp.access_token, config.whatsapp.phone_number_id)
-        self.command_handler = CommandHandler()
+    Args:
+        channel: The WhatsAppChannel instance to use (can be Business API or Bridge).
+        model_name: Optional name of LLM model to use.
+        temperature: The temperature for LLM responses (default: 0.7).
+        mcp_servers_override: Optional override for MCP servers.
+        audio_transcriber_config: Optional audio transcription config.
+    """
+
+    def __init__(
+        self,
+        channel: WhatsAppChannel,
+        model_name: str | None = None,
+        temperature: float = 0.7,
+        mcp_servers_override: list[str] | None = None,
+        audio_transcriber_config: Any = None,
+    ) -> None:
+        self.channel = channel
+        self._model_name = model_name
+        self._temperature = temperature
+        self._running = False
+        self._shutdown_event = asyncio.Event()
+        self._mcp_servers_override = mcp_servers_override
+        self._audio_transcriber_config = audio_transcriber_config
+
+        # Message history
         self.message_history: List[Dict[str, Any]] = []
-        self.agent_registry: Dict[str, Any] = {}
         self.conversations: Dict[str, Dict[str, Any]] = {}
 
-        # Initialize with default handlers
-        self._register_default_handlers()
+        # Command parser
+        self._command_parser = CommandParser()
 
-    def register_agent(self, name: str, agent_class: type) -> None:
-        """Register an agent with the router."""
-        self.agent_registry[name] = agent_class
-        # Register the agent's commands
-        if hasattr(agent_class, "commands"):
-            for command in agent_class.commands:
-                handler = getattr(agent_class, "handle", None)
-                if handler:
-                    self.command_handler.register_command(command, handler)
+        logger.info(f"WhatsAppRouterAgent initialized with channel type: {type(channel).__name__}")
 
-    async def process_message(self, message_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Process an incoming message and route it appropriately."""
+    async def start(self) -> None:
+        """Start WhatsApp router agent."""
+        if self._running:
+            logger.warning("Agent is already running")
+            return
+
+        logger.info("Starting WhatsApp router agent...")
         try:
-            # Parse the incoming message
-            message = await self.channel.receive_message(message_data)
-            if not message:
-                # Media/unsupported messages return None - mark as handled
-                return {"status": "handled", "message": "Message type not supported"}
+            # Initialize channel (works for both implementations)
+            if hasattr(self.channel, "initialize"):
+                await self.channel.initialize()
 
-            # Store in message history
-            self._add_to_history(message, "received")
+            # Set up MCP servers
+            self._mcp_servers = self._mcp_servers_override or ["fetch"]
 
-            # Parse as command
-            parser = CommandParser()
-            parsed = parser.parse(message.text if hasattr(message, "text") else "")
-
-            # Handle commands
-            if parsed.get("command"):
-                result = await self.command_handler.handle(message.text)
-                if result.get("status") == "error":
-                    return await self._send_error_response(message, result["message"])  # type: ignore[func-returns-value,return-value]
-                else:
-                    # Send response back
-                    await self.channel.send_message(message.from_number, result.get("message", ""))
-                    return {"status": "success", "message": "Command processed"}
-
-            # Route to appropriate agent
-            agent_name = self._determine_agent(message, parsed)
-
-            if agent_name in self.agent_registry:
-                agent = self.agent_registry[agent_name]
-                # Update conversation context
-                self._update_conversation(message.from_number, agent_name, parsed)
-
-                # Process with agent
-                result = await agent.process_message(message, self.conversations.get(message.from_number, {}))
-
-                # Send response
-                if result and "response" in result:
-                    await self.channel.send_message(message.from_number, result["response"])
-
-                return {"status": "success", "agent": agent_name, "message": "Message routed to agent"}
-            else:
-                # No suitable agent found
-                response = "I'm not sure how to handle this message. Try using a command like /help for assistance."
-                await self.channel.send_message(message.from_number, response)
-                return {"status": "handled", "message": "Default response sent"}
+            # Start listening for messages
+            await self.channel.listen(self._handle_message)
 
         except Exception as e:
-            error_message = f"Error processing message: {str(e)}"
-            print(error_message)
+            logger.error(f"Failed to start WhatsApp router agent: {e}")
+            self._running = False
+            raise
 
-            # Send error response if possible
-            if message:
-                await self._send_error_response(message, "Sorry, I encountered an error processing your message.")
+    async def stop(self) -> None:
+        """Stop WhatsApp router agent."""
+        if not self._running:
+            return
 
-            return {"status": "error", "message": error_message}
+        logger.info("Stopping WhatsApp router agent...")
+        self._running = False
 
-    def _register_default_handlers(self) -> None:
-        """Register default command handlers."""
+        # Signal shutdown to all components
+        self._shutdown_event.set()
 
-        async def handle_help(parsed: Dict[str, Any]) -> Dict[str, Any]:
-            """Handle help command."""
-            help_text = """
-Available commands:
-/schedule <task> - Schedule a task
-/list [type] - List items
-/system <command> - System commands
-/help [command] - Show help for a specific command
-            """
-            return {"message": help_text.strip()}
+        # Shut down channel
+        try:
+            if hasattr(self.channel, "shutdown"):
+                await self.channel.shutdown()
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
 
-        self.command_handler.register_command("help", handle_help)
+        logger.info("WhatsApp router agent stopped")
 
-        async def handle_list(parsed: Dict[str, Any]) -> Dict[str, Any]:
-            """Handle list command."""
-            return {"message": "List functionality not yet implemented"}
+    async def _handle_message(self, incoming: Any) -> None:
+        """Handle an incoming message from the channel.
 
-        self.command_handler.register_command("list", handle_list)
+        The incoming message format depends on channel implementation:
+        - Business API: Dict with 'entry', 'changes', etc.
+        - Bridge: BaseWhatsAppMessage with text, sender_id, etc.
+        """
+        self.logger.info(f"Processing message: {incoming}")
 
-        async def handle_system(parsed: Dict[str, Any]) -> Dict[str, Any]:
-            """Handle system commands."""
-            args = parsed.get("args", [])
-            if not args:
-                return {"message": "Usage: /system <command>"}
+        try:
+            # Check if we have text content
+            if isinstance(incoming, dict) and "text" in incoming:
+                message_text = incoming.get("text", "")
 
-            command = args[0]
-            if command == "status":
-                return {"message": "WhatsAppRouterAgent is running"}
-            elif command == "version":
-                return {"message": "Agntrick WhatsApp v0.1.0"}
-            else:
-                return {"message": f"Unknown system command: {command}"}
+                # Check for commands using the bridge's command parser
+                # (works with both implementations)
+                parser = CommandParser()
+                command = parser.parse(message_text)
+                self.logger.info(f"Parsed command: {command}")
 
-        self.command_handler.register_command("system", handle_system)
+                # Handle commands
+                if command.get("command"):
+                    # Simple echo for commands like /help
+                    response = f"Command not implemented: {command.get('command')}"
+                    await self._send_response(incoming, response)
+                    return
 
-    def _determine_agent(self, message: BaseWhatsAppMessage, parsed: Dict[str, Any]) -> str:
-        """Determine which agent should handle the message."""
-        # Check for explicit agent designation in commands
-        if parsed.get("command"):
-            # Look for agent-specific commands
-            for agent_name in self.config.agents:
-                if agent_name.name.lower() == parsed.get("command", "").lower():
-                    return agent_name.name
+                # For regular messages, just echo back
+                response = f"Received: {message_text}"
+                await self._send_response(incoming, response)
 
-        # Use default agent if configured
-        if self.config.default_agent:
-            return self.config.default_agent
+        except Exception as e:
+            self.logger.error(f"Error handling message: {e}")
 
-        # Fallback to a default agent
-        return "default"
+            try:
+                # Send error response if possible
+                if isinstance(incoming, dict) and "sender_id" in incoming:
+                    await self._send_response(incoming, "Sorry, I encountered an error processing your message.")
+            except Exception as send_error:
+                self.logger.error(f"Failed to send error response: {send_error}")
 
-    def _update_conversation(self, phone_number: str, agent_name: str, parsed: Dict[str, Any]) -> None:
-        """Update conversation context for a phone number."""
-        if phone_number not in self.conversations:
-            self.conversations[phone_number] = {
-                "current_agent": agent_name,
-                "history": [],
-                "started_at": datetime.now().isoformat(),
-            }
+    async def _send_response(self, incoming: Any, response: str) -> None:
+        """Send a response message through the channel.
 
-        # Update current agent
-        self.conversations[phone_number]["current_agent"] = agent_name
+        The incoming object format varies by channel type:
+        - Bridge: Has sender_id, can be dict with text
+        - Business API: Has from_number, to_number
 
-        # Add to history
-        self.conversations[phone_number]["history"].append(
-            {
-                "timestamp": datetime.now().isoformat(),
-                "message": parsed.get("raw_text", ""),
-                "type": "command" if parsed.get("command") else "text",
-            }
-        )
+        We normalize to get the recipient number and text.
+        """
+        # Get recipient based on incoming format
+        if isinstance(incoming, dict):
+            recipient_id = incoming.get("sender_id", "")
+            text = incoming.get("text", response)
+        elif isinstance(incoming, BaseWhatsAppMessage):
+            recipient_id = incoming.to_number
+            text = response
+        else:
+            self.logger.warning(f"Unknown incoming format: {type(incoming)}")
+            return
 
-    def _add_to_history(self, message: BaseWhatsAppMessage, direction: str) -> None:
-        """Add message to history."""
-        history_entry = {
-            "id": message.message_id,
-            "timestamp": message.timestamp.isoformat(),
-            "direction": direction,
-            "from": message.from_number,
-            "to": message.to_number,
-            "type": getattr(message, "message_type", "unknown"),
-        }
-
-        if hasattr(message, "text"):
-            history_entry["text"] = message.text
-
-        self.message_history.append(history_entry)
-
-        # Enforce history limit
-        if len(self.message_history) > self.config.message_history_limit:
-            self.message_history = self.message_history[-self.config.message_history_limit :]
-
-    async def _send_error_response(self, message: BaseWhatsAppMessage, error_msg: str) -> None:
-        """Send error response to user."""
-        await self.channel.send_message(message.from_number, error_msg)
+        # Send through the channel
+        await self.channel.send_message(recipient_id, text)
+        self.logger.info(f"Response sent to {recipient_id}")
