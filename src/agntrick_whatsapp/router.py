@@ -53,7 +53,7 @@ class WhatsAppRouterAgent:
             parsed = parser.parse(message.text if hasattr(message, 'text') else "")
 
             # Handle commands
-            if parsed.command_type.value == "command" and parsed.command:
+            if parsed.get("command"):
                 result = await self.command_handler.handle(message.text)
                 if result.get("status") == "error":
                     return await self._send_error_response(message, result["message"])
@@ -103,7 +103,7 @@ class WhatsAppRouterAgent:
 
     def _register_default_handlers(self) -> None:
         """Register default command handlers."""
-        async def handle_help(parsed: ParsedCommand) -> Dict[str, Any]:
+        async def handle_help(parsed: Dict[str, Any]) -> Dict[str, Any]:
             """Handle help command."""
             help_text = """
 Available commands:
@@ -116,18 +116,19 @@ Available commands:
 
         self.command_handler.register_command("help", handle_help)
 
-        async def handle_list(parsed: ParsedCommand) -> Dict[str, Any]:
+        async def handle_list(parsed: Dict[str, Any]) -> Dict[str, Any]:
             """Handle list command."""
             return {"message": "List functionality not yet implemented"}
 
         self.command_handler.register_command("list", handle_list)
 
-        async def handle_system(parsed: ParsedCommand) -> Dict[str, Any]:
+        async def handle_system(parsed: Dict[str, Any]) -> Dict[str, Any]:
             """Handle system commands."""
-            if not parsed.args:
+            args = parsed.get("args", [])
+            if not args:
                 return {"message": "Usage: /system <command>"}
 
-            command = parsed.args[0]
+            command = args[0]
             if command == "status":
                 return {"message": "WhatsAppRouterAgent is running"}
             elif command == "version":
@@ -137,13 +138,13 @@ Available commands:
 
         self.command_handler.register_command("system", handle_system)
 
-    def _determine_agent(self, message: BaseWhatsAppMessage, parsed: ParsedCommand) -> str:
+    def _determine_agent(self, message: BaseWhatsAppMessage, parsed: Dict[str, Any]) -> str:
         """Determine which agent should handle the message."""
         # Check for explicit agent designation in commands
-        if parsed.command_type.value == "command" and parsed.command:
+        if parsed.get("command"):
             # Look for agent-specific commands
             for agent_name in self.config.agents:
-                if agent_name.name.lower() == parsed.command.lower():
+                if agent_name.name.lower() == parsed.get("command", "").lower():
                     return agent_name.name
 
         # Use default agent if configured
@@ -153,7 +154,7 @@ Available commands:
         # Fallback to a default agent
         return "default"
 
-    def _update_conversation(self, phone_number: str, agent_name: str, parsed: ParsedCommand) -> None:
+    def _update_conversation(self, phone_number: str, agent_name: str, parsed: Dict[str, Any]) -> None:
         """Update conversation context for a phone number."""
         if phone_number not in self.conversations:
             self.conversations[phone_number] = {
@@ -168,8 +169,8 @@ Available commands:
         # Add to history
         self.conversations[phone_number]["history"].append({
             "timestamp": datetime.now().isoformat(),
-            "message": parsed.raw_text,
-            "type": parsed.command_type.value
+            "message": parsed.get("raw_text", ""),
+            "type": "command" if parsed.get("command") else "text"
         })
 
     def _add_to_history(self, message: BaseWhatsAppMessage, direction: str) -> None:

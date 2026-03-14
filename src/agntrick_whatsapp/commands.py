@@ -55,15 +55,15 @@ class CommandParser:
             "system": re.compile(rf"^{self.prefix}system\s+(.+)", re.IGNORECASE),
         }
 
-    def parse(self, text: str) -> ParsedCommand:
+    def parse(self, text: str) -> dict:
         """Parse a text message into a command structure."""
         text = text.strip()
 
         if not text:
-            return ParsedCommand(
-                command_type=CommandType.TEXT,
-                raw_text=text
-            )
+            return {
+                "command": None,
+                "args": []
+            }
 
         # Check for command patterns
         for command_type, pattern in self.command_patterns.items():
@@ -83,22 +83,20 @@ class CommandParser:
 
         # If no command prefix, treat as regular text
         if not text.startswith(self.prefix):
-            return ParsedCommand(
-                command_type=CommandType.TEXT,
-                raw_text=text
-            )
+            return {
+                "command": None,
+                "args": []
+            }
 
         # Generic command with prefix
         parts = text[len(self.prefix):].strip().split(maxsplit=1)
         command = parts[0] if parts else None
         args = parts[1].split() if len(parts) > 1 else []
 
-        return ParsedCommand(
-            command_type=CommandType.COMMAND,
-            command=command,
-            args=args,
-            raw_text=text
-        )
+        return {
+            "command": command,
+            "args": args
+        }
 
     def _parse_schedule_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
         """Parse schedule command with special handling."""
@@ -126,40 +124,31 @@ class CommandParser:
             if not any(re.search(pattern, part) for pattern in recurring_patterns.values()):
                 task_parts.append(part)
 
-        return ParsedCommand(
-            command_type=CommandType.SCHEDULE,
-            command="schedule",
-            args=task_parts,
-            raw_text=text,
-            metadata=metadata
-        )
+        return {
+            "command": "schedule",
+            "args": task_parts
+        }
 
     def _parse_list_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
         """Parse list command."""
-        return ParsedCommand(
-            command_type=CommandType.COMMAND,
-            command="list",
-            args=args,
-            raw_text=text
-        )
+        return {
+            "command": "list",
+            "args": args
+        }
 
     def _parse_help_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
         """Parse help command."""
-        return ParsedCommand(
-            command_type=CommandType.COMMAND,
-            command="help",
-            args=args,
-            raw_text=text
-        )
+        return {
+            "command": "help",
+            "args": args
+        }
 
     def _parse_system_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
         """Parse system command."""
-        return ParsedCommand(
-            command_type=CommandType.SYSTEM,
-            command="system",
-            args=args,
-            raw_text=text
-        )
+        return {
+            "command": "system",
+            "args": args
+        }
 
 
 class CommandHandler:
@@ -177,22 +166,26 @@ class CommandHandler:
         """Handle a text message and execute appropriate command."""
         parsed = self.parser.parse(text)
 
-        if parsed.command_type == CommandType.TEXT:
+        if parsed.get("command") is None:
             return await self._handle_text_message(parsed)
-        elif parsed.command in self.commands:
-            handler = self.commands[parsed.command]
-            return await handler(parsed)
+        elif parsed.get("command") in self.commands:
+            handler = self.commands[parsed.get("command")]
+            if callable(handler):
+                result = await handler(parsed)
+                if isinstance(result, dict):
+                    return result
+            return {"status": "error", "message": "Handler returned invalid response"}
         else:
             return {
                 "status": "error",
-                "message": f"Unknown command: {parsed.command}",
-                "parsed": parsed.to_dict()
+                "message": f"Unknown command: {parsed.get('command')}",
+                "parsed": parsed
             }
 
-    async def _handle_text_message(self, parsed: ParsedCommand) -> Dict[str, Any]:
+    async def _handle_text_message(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
         """Handle regular text messages."""
         return {
             "status": "text",
-            "message": parsed.raw_text,
-            "parsed": parsed.to_dict()
+            "message": parsed.get("raw_text", ""),
+            "parsed": parsed
         }
