@@ -121,6 +121,11 @@ class WhatsAppChannelBase(ABC):
     """Base class for WhatsApp channel implementations."""
 
     @abstractmethod
+    async def initialize(self) -> None:
+        """Initialize the channel."""
+        pass
+
+    @abstractmethod
     async def send_message(self, to_number: str, message: Union[str, BaseWhatsAppMessage]) -> str:
         """Send a message to a WhatsApp number."""
         pass
@@ -133,4 +138,14 @@ class WhatsAppChannelBase(ABC):
     @abstractmethod
     async def get_message_status(self, message_id: str) -> Optional[WhatsAppMessageStatus]:
         """Get the status of a message."""
+        pass
+
+    @abstractmethod
+    async def listen(self, callback: Any) -> None:
+        """Start listening for incoming messages."""
+        pass
+
+    @abstractmethod
+    async def shutdown(self) -> None:
+        """Shutdown the channel."""
         pass

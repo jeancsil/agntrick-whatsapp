@@ -15,17 +15,9 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 logger = logging.getLogger(__name__)
-
-
-class _ThreadLocalDB(threading.local):
-    """Thread-local storage for database connections with type hints."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.conn: sqlite3.Connection | None = None
 
 
 class ConfigurationError(Exception):
@@ -124,7 +116,6 @@ class WhatsAppChannel:
 
         # Message deduplication using SQLite
         self._db_path = self.storage_path / "processed_messages.db"
-        self._db_local = _ThreadLocalDB()
         self._db_lock = threading.Lock()
 
         # Validate storage path
@@ -313,22 +304,19 @@ class WhatsAppChannel:
 
     def _close_deduplication_db(self) -> None:
         """Close the deduplication database connection."""
-        if hasattr(self._db_local, "conn") and self._db_local.conn is not None:
-            self._db_local.conn.close()
-            self._db_local.conn = None
+        if hasattr(self, "_db"):
+            self._db.close()
+            del self._db
 
     def _get_db_connection(self) -> sqlite3.Connection:
-        """Get or create a thread-local SQLite connection.
+        """Get or create a thread-local SQLite connection via agntrick_storage."""
+        if not hasattr(self, "_db"):
+            from agntrick_storage.database import Database  # type: ignore[import-untyped]
 
-        Each thread gets its own connection to avoid SQLite threading issues.
+            self._db = Database(self._db_path)
 
-        Returns:
-            A SQLite connection for the current thread.
-        """
-        if not hasattr(self._db_local, "conn") or self._db_local.conn is None:
-            self._db_local.conn = sqlite3.connect(str(self._db_path))
             # Initialize table for this new connection
-            cursor = self._db_local.conn.cursor()
+            cursor = self._db.connection.cursor()  # type: ignore[union-attr]
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS processed_messages (
                     message_hash TEXT PRIMARY KEY,
@@ -341,12 +329,11 @@ class WhatsAppChannel:
             cursor.execute("PRAGMA table_info(processed_messages)")
             columns = [row[1] for row in cursor.fetchall()]
             if "last_seen_at" not in columns:
-                # Old schema without last_seen_at, migrate by adding column
                 cursor.execute("ALTER TABLE processed_messages ADD COLUMN last_seen_at REAL NOT NULL DEFAULT 0")
                 logger.info("Migrated database schema: added last_seen_at column")
-            self._db_local.conn.commit()
-            logger.debug(f"Created thread-local DB connection for thread {threading.get_ident()}")
-        return self._db_local.conn
+            self._db.connection.commit()  # type: ignore[union-attr]
+
+        return cast(sqlite3.Connection, self._db.connection)  # type: ignore[return-value]
 
     async def listen(self, callback: Callable[[Any], Any]) -> None:
         """Start listening for incoming WhatsApp messages.

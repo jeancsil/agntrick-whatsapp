@@ -2,6 +2,9 @@
 
 import sqlite3
 from pathlib import Path
+from typing import cast
+
+from agntrick_storage.database import Database  # type: ignore[import-untyped]
 
 from ..constants import DATA_DIR
 
@@ -16,21 +19,11 @@ class DatabaseManager:
             db_path: Path to the database file. If None, uses default location in DATA_DIR.
         """
         self.db_path = db_path or DATA_DIR / "whatsapp.db"
-        self._ensure_data_dir()
-
-    def _ensure_data_dir(self) -> None:
-        """Ensure the data directory exists."""
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db = Database(self.db_path)
 
     def get_connection(self) -> sqlite3.Connection:
-        """Get a database connection.
-
-        Returns:
-            SQLite connection object.
-        """
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        """Get a database connection."""
+        return cast(sqlite3.Connection, self._db.connection)  # type: ignore[return-value]
 
     def execute(self, query: str, params: tuple = ()) -> sqlite3.Cursor:
         """Execute a SQL query.
@@ -43,18 +36,14 @@ class DatabaseManager:
             Database cursor.
         """
         conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, params)
-            conn.commit()
-            return cursor
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+        return cursor
 
     def close(self) -> None:
         """Close database connection and clean up resources."""
-        # Nothing to close since connections are transient in get_connection()
-        pass
+        self._db.close()
 
     def init_database(self) -> None:
         """Initialize database and create all necessary tables."""

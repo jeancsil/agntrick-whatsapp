@@ -53,11 +53,33 @@ wheels = [
 ]
 
 [[package]]
+name = "agntrick-storage"
+version = "0.1.0"
+source = { editable = "../agents/packages/agntrick-storage" }
+dependencies = [
+    { name = "croniter" },
+    { name = "dateparser" },
+    { name = "pydantic" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "croniter", specifier = ">=3.0.0" },
+    { name = "dateparser", specifier = ">=1.2.0" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
+    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0.0" },
+]
+provides-extras = ["dev"]
+
+[[package]]
 name = "agntrick-whatsapp"
 version = "0.3.5"
 source = { editable = "." }
 dependencies = [
     { name = "agntrick" },
+    { name = "agntrick-storage" },
     { name = "croniter" },
     { name = "dateparser" },
     { name = "ffmpeg-python" },
@@ -82,6 +104,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agntrick", specifier = ">=0.2.9" },
+    { name = "agntrick-storage", editable = "../agents/packages/agntrick-storage" },
     { name = "croniter", specifier = ">=6.0.0" },
     { name = "dateparser", specifier = ">=1.3.0" },
     { name = "ffmpeg-python", specifier = ">=0.2.0" },

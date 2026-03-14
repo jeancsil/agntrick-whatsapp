@@ -33,19 +33,16 @@ class Note:
         VALUES (?, ?)
         """
         conn = db_manager.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, (thread_id, content))
-            conn.commit()
-            return cls(
-                id=int(cursor.lastrowid) if cursor.lastrowid else 0,
-                thread_id=thread_id,
-                content=content,
-                created_at=datetime.now(),
-                updated_at=datetime.now(),
-            )
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute(query, (thread_id, content))
+        conn.commit()
+        return cls(
+            id=int(cursor.lastrowid) if cursor.lastrowid else 0,
+            thread_id=thread_id,
+            content=content,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
 
     @classmethod
     def get_by_thread(cls, thread_id: str) -> list["Note"]:
@@ -59,22 +56,19 @@ class Note:
         """
         query = "SELECT * FROM notes WHERE thread_id = ? ORDER BY created_at DESC"
         conn = db_manager.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, (thread_id,))
-            rows = cursor.fetchall()
-            return [
-                cls(
-                    id=row["id"],
-                    thread_id=row["thread_id"],
-                    content=row["content"],
-                    created_at=datetime.fromisoformat(row["created_at"]),
-                    updated_at=datetime.fromisoformat(row["updated_at"]),
-                )
-                for row in rows
-            ]
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute(query, (thread_id,))
+        rows = cursor.fetchall()
+        return [
+            cls(
+                id=row["id"],
+                thread_id=row["thread_id"],
+                content=row["content"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+            for row in rows
+        ]
 
     @classmethod
     def get_by_id(cls, note_id: int) -> Optional["Note"]:
@@ -88,21 +82,18 @@ class Note:
         """
         query = "SELECT * FROM notes WHERE id = ?"
         conn = db_manager.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, (note_id,))
-            row = cursor.fetchone()
-            if row:
-                return cls(
-                    id=row["id"],
-                    thread_id=row["thread_id"],
-                    content=row["content"],
-                    created_at=datetime.fromisoformat(row["created_at"]),
-                    updated_at=datetime.fromisoformat(row["updated_at"]),
-                )
-            return None
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute(query, (note_id,))
+        row = cursor.fetchone()
+        if row:
+            return cls(
+                id=row["id"],
+                thread_id=row["thread_id"],
+                content=row["content"],
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+        return None
 
 
 @dataclass
@@ -138,22 +129,19 @@ class Task:
         VALUES (?, ?, ?, ?)
         """
         conn = db_manager.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, (thread_id, title, description, due_date.isoformat() if due_date else None))
-            conn.commit()
-            return cls(
-                id=int(cursor.lastrowid) if cursor.lastrowid else 0,
-                thread_id=thread_id,
-                title=title,
-                description=description,
-                due_date=due_date,
-                is_completed=False,
-                created_at=datetime.now(),
-                updated_at=datetime.now(),
-            )
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute(query, (thread_id, title, description, due_date.isoformat() if due_date else None))
+        conn.commit()
+        return cls(
+            id=int(cursor.lastrowid) if cursor.lastrowid else 0,
+            thread_id=thread_id,
+            title=title,
+            description=description,
+            due_date=due_date,
+            is_completed=False,
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+        )
 
     @classmethod
     def get_by_thread(cls, thread_id: str) -> list["Task"]:
@@ -167,25 +155,22 @@ class Task:
         """
         query = "SELECT * FROM tasks WHERE thread_id = ? ORDER BY created_at DESC"
         conn = db_manager.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, (thread_id,))
-            rows = cursor.fetchall()
-            return [
-                cls(
-                    id=row["id"],
-                    thread_id=row["thread_id"],
-                    title=row["title"],
-                    description=row["description"],
-                    due_date=datetime.fromisoformat(row["due_date"]) if row["due_date"] else None,
-                    is_completed=bool(row["is_completed"]),
-                    created_at=datetime.fromisoformat(row["created_at"]),
-                    updated_at=datetime.fromisoformat(row["updated_at"]),
-                )
-                for row in rows
-            ]
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute(query, (thread_id,))
+        rows = cursor.fetchall()
+        return [
+            cls(
+                id=row["id"],
+                thread_id=row["thread_id"],
+                title=row["title"],
+                description=row["description"],
+                due_date=datetime.fromisoformat(row["due_date"]) if row["due_date"] else None,
+                is_completed=bool(row["is_completed"]),
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+            for row in rows
+        ]
 
     @classmethod
     def get_by_id(cls, task_id: int) -> Optional["Task"]:
@@ -199,37 +184,31 @@ class Task:
         """
         query = "SELECT * FROM tasks WHERE id = ?"
         conn = db_manager.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, (task_id,))
-            row = cursor.fetchone()
-            if row:
-                return cls(
-                    id=row["id"],
-                    thread_id=row["thread_id"],
-                    title=row["title"],
-                    description=row["description"],
-                    due_date=datetime.fromisoformat(row["due_date"]) if row["due_date"] else None,
-                    is_completed=bool(row["is_completed"]),
-                    created_at=datetime.fromisoformat(row["created_at"]),
-                    updated_at=datetime.fromisoformat(row["updated_at"]),
-                )
-            return None
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute(query, (task_id,))
+        row = cursor.fetchone()
+        if row:
+            return cls(
+                id=row["id"],
+                thread_id=row["thread_id"],
+                title=row["title"],
+                description=row["description"],
+                due_date=datetime.fromisoformat(row["due_date"]) if row["due_date"] else None,
+                is_completed=bool(row["is_completed"]),
+                created_at=datetime.fromisoformat(row["created_at"]),
+                updated_at=datetime.fromisoformat(row["updated_at"]),
+            )
+        return None
 
     def complete(self) -> None:
         """Mark the task as completed."""
         query = "UPDATE tasks SET is_completed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         conn = db_manager.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, (self.id,))
-            conn.commit()
-            self.is_completed = True
-            self.updated_at = datetime.now()
-        finally:
-            conn.close()
+        cursor = conn.cursor()
+        cursor.execute(query, (self.id,))
+        conn.commit()
+        self.is_completed = True
+        self.updated_at = datetime.now()
 
     def update(
         self, title: Optional[str] = None, description: Optional[str] = None, due_date: Optional[datetime] = None
@@ -260,12 +239,9 @@ class Task:
             params.append(str(self.id))
 
             conn = db_manager.get_connection()
-            try:
-                cursor = conn.cursor()
-                cursor.execute(query, tuple(params))
-                conn.commit()
-            finally:
-                conn.close()
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            conn.commit()
 
             if title is not None:
                 self.title = title
@@ -299,10 +275,7 @@ class Task:
             params.append(str(self.id))
 
             conn = db_manager.get_connection()
-            try:
-                cursor = conn.cursor()
-                cursor.execute(query, tuple(params))
-                conn.commit()
-            finally:
-                conn.close()
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            conn.commit()
         self.updated_at = datetime.now()
