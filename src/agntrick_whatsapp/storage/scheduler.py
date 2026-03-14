@@ -93,9 +93,6 @@ class TimeParser:
         description = f"{amount} {unit}{'s' if amount != 1 else ''} from now"
 
         return result_time, description
-        description = f"{amount} {unit}{'s' if amount != 1 else ''} from now"
-
-        return result_time, description
 
     @staticmethod
     def _parse_datetime(datetime_str: str) -> Tuple[datetime, str]:

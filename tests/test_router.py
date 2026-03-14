@@ -69,7 +69,7 @@ class TestWhatsAppRouterAgent:
         await router._handle_message(message)
         assert len(channel.messages_sent) == 1
         # Commands are not implemented, so it says "Command not implemented"
-        assert "Command not implemented" in channel.messages_sent[0][1]
+        assert "Command received but not fully wired yet" in channel.messages_sent[0][1]
 
     async def test_send_response(self):
         """Test the _send_response method."""

@@ -29,14 +29,7 @@ dependencies = [
     "python-dateutil>=2.9.0.post0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.23.0",
-    "pytest-cov>=5.0.0",
-    "ruff>=0.3.0",
-    "mypy>=1.9.0",
-]
+
 
 [project.urls]
 Homepage = "https://github.com/jeancsil/agntrick-whatsapp"
@@ -55,6 +48,12 @@ packages = ["src/agntrick_whatsapp"]
 addopts = "-ra -q --import-mode=importlib"
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["src/agntrick_whatsapp"]
+
+[tool.coverage.report]
+fail_under = 35
 
 [tool.ruff]
 line-length = 120
@@ -75,6 +74,8 @@ check_untyped_defs = true
 dev = [
     "mypy>=1.19.1",
     "pytest-cov>=7.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest>=8.0.0",
     "ruff>=0.15.6",
     "types-croniter>=6.0.0.20250809",
     "types-python-dateutil>=2.9.0.20260305",

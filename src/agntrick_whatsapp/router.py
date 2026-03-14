@@ -51,14 +51,17 @@ class WhatsAppRouterAgent:
         temperature: float = 0.7,
         mcp_servers_override: list[str] | None = None,
         audio_transcriber_config: Any = None,
+        agent: Any = None,
     ) -> None:
         self.channel = channel
         self._model_name = model_name
         self._temperature = temperature
         self._running = False
+        self._listen_task: asyncio.Task | None = None
         self._shutdown_event = asyncio.Event()
         self._mcp_servers_override = mcp_servers_override
         self._audio_transcriber_config = audio_transcriber_config
+        self._agent = agent
 
         # Message history
         self.message_history: List[Dict[str, Any]] = []
@@ -76,6 +79,7 @@ class WhatsAppRouterAgent:
             return
 
         logger.info("Starting WhatsApp router agent...")
+        self._running = True
         try:
             # Initialize channel (works for both implementations)
             if hasattr(self.channel, "initialize"):
@@ -84,8 +88,26 @@ class WhatsAppRouterAgent:
             # Set up MCP servers
             self._mcp_servers = self._mcp_servers_override or ["fetch"]
 
-            # Start listening for messages
-            await self.channel.listen(self._handle_message)
+            # Initialize a generic agent if one was not injected
+            if self._agent is None:
+                # Import lazily to avoid circular dependencies if agntrick is linked
+                from agntrick.agent import AgentBase  # type: ignore[import-untyped]
+
+                class DefaultRouterAgent(AgentBase):
+                    @property
+                    def system_prompt(self) -> str:
+                        return DEFAULT_SYSTEM_PROMPT
+
+                    def local_tools(self) -> list:
+                        return []
+
+                self._agent = DefaultRouterAgent(
+                    model_name=self._model_name,
+                    temperature=self._temperature,
+                )
+
+            # Start listening for messages in a supervised background task
+            self._listen_task = asyncio.create_task(self.channel.listen(self._handle_message))
 
         except Exception as e:
             logger.error(f"Failed to start WhatsApp router agent: {e}")
@@ -102,6 +124,10 @@ class WhatsAppRouterAgent:
 
         # Signal shutdown to all components
         self._shutdown_event.set()
+
+        # Cancel listen task if it exists
+        if hasattr(self, "_listen_task") and self._listen_task is not None:
+            self._listen_task.cancel()
 
         # Shut down channel
         try:
@@ -122,25 +148,33 @@ class WhatsAppRouterAgent:
         logger.info(f"Processing message: {incoming}")
 
         try:
-            # Check if we have text content
+            message_text = None
+            # Extract text (handling dict or object based on channel format)
             if isinstance(incoming, dict) and "text" in incoming:
                 message_text = incoming.get("text", "")
+            elif hasattr(incoming, "text") and incoming.text:
+                message_text = incoming.text
 
-                # Check for commands using the bridge's command parser
-                # (works with both implementations)
-                parser = CommandParser()
-                command = parser.parse(message_text)
-                logger.info(f"Parsed command: {command}")
+            if not message_text:
+                return
 
-                # Handle commands
-                if command.get("command"):
-                    # Simple echo for commands like /help
-                    response = f"Command not implemented: {command.get('command')}"
-                    await self._send_response(incoming, response)
-                    return
+            # Check for commands using the stored command parser
+            command = self._command_parser.parse(message_text)
+            logger.info(f"Parsed command: {command}")
 
-                # For regular messages, just echo back
-                response = f"Received: {message_text}"
+            # Handle commands
+            if command.get("command"):
+                # Handle command
+                response = f"Command received but not fully wired yet: {command.get('command')}"
+                await self._send_response(incoming, response)
+                return
+
+            # For regular messages, process through the LLM agent
+            if self._agent:
+                result = await self._agent.run(message_text)
+                await self._send_response(incoming, str(result))
+            else:
+                response = f"Received (No LLM Agent): {message_text}"
                 await self._send_response(incoming, response)
 
         except Exception as e:

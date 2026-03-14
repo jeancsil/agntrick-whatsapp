@@ -1,8 +1,9 @@
 """Pydantic configuration models for WhatsApp integration."""
 
+import re
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator
 
 
 class WhatsAppConfig(BaseModel):
@@ -17,21 +18,21 @@ class WhatsAppConfig(BaseModel):
     retry_attempts: int = Field(default=3, description="Number of retry attempts for failed messages")
     retry_delay: int = Field(default=5, description="Delay between retries in seconds")
 
-    @validator("access_token")
+    @field_validator("access_token")
     @classmethod
     def validate_access_token(cls, v: str) -> str:
         if not v or not v.startswith("EA"):
             raise ValueError('Access token must start with "EA"')
         return v
 
-    @validator("phone_number_id")
+    @field_validator("phone_number_id")
     @classmethod
     def validate_phone_number_id(cls, v: str) -> str:
         if not v.isdigit():
             raise ValueError("Phone number ID must be numeric")
         return v
 
-    @validator("api_version")
+    @field_validator("api_version")
     @classmethod
     def validate_api_version(cls, v: str) -> str:
         allowed_versions = ["18.0", "17.0", "16.0"]
@@ -49,7 +50,7 @@ class StorageConfig(BaseModel):
     max_connections: int = Field(default=10, description="Maximum database connections")
     timeout: int = Field(default=30, description="Database operation timeout in seconds")
 
-    @validator("type")
+    @field_validator("type")
     @classmethod
     def validate_storage_type(cls, v: str) -> str:
         allowed_types = ["sqlite", "postgres", "mysql", "memory"]
@@ -67,10 +68,10 @@ class AgentConfig(BaseModel):
     commands: List[str] = Field(default_factory=list, description="List of supported commands")
     settings: Dict[str, Any] = Field(default_factory=dict, description="Additional agent settings")
 
-    @validator("name")
+    @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
-        if not v.isalnum() and "_" not in v:
+        if not re.match(r"^[a-zA-Z0-9_]+$", v):
             raise ValueError("Agent name must be alphanumeric or underscore")
         return v
 
@@ -86,21 +87,21 @@ class WhatsAppRouterConfig(BaseModel):
     max_conversation_length: int = Field(default=100, description="Maximum conversation length")
     debug_mode: bool = Field(default=False, description="Enable debug logging")
 
-    @validator("default_agent")
+    @field_validator("default_agent")
     @classmethod
-    def validate_default_agent(cls, v: Optional[str], values: dict) -> Optional[str]:
-        if v and v not in [agent.name for agent in values.get("agents", [])]:
+    def validate_default_agent(cls, v: Optional[str], info: ValidationInfo) -> Optional[str]:
+        if v and v not in [agent.name for agent in info.data.get("agents", [])]:
             raise ValueError("Default agent must be in the agents list")
         return v
 
-    @validator("message_history_limit")
+    @field_validator("message_history_limit")
     @classmethod
     def validate_message_history_limit(cls, v: int) -> int:
         if v < 0 or v > 10000:
             raise ValueError("Message history limit must be between 0 and 10000")
         return v
 
-    @validator("max_conversation_length")
+    @field_validator("max_conversation_length")
     @classmethod
     def validate_max_conversation_length(cls, v: int) -> int:
         if v < 10 or v > 1000:
@@ -121,7 +122,7 @@ class WhatsAppRouterConfig(BaseModel):
         import json
 
         with open(file_path, "w") as f:
-            json.dump(self.dict(), f, indent=2)
+            json.dump(self.model_dump(), f, indent=2)
 
 
 class WebhookConfig(BaseModel):
@@ -132,7 +133,7 @@ class WebhookConfig(BaseModel):
     webhook_url: str = Field(..., description="Webhook URL")
     challenge_timeout: int = Field(default=10, description="Challenge timeout in seconds")
 
-    @validator("webhook_url")
+    @field_validator("webhook_url")
     @classmethod
     def validate_webhook_url(cls, v: str) -> str:
         if not v.startswith(("http://", "https://")):
