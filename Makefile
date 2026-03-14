@@ -20,6 +20,9 @@ help: ## Show this help message
 install: ## Install all dependencies using uv
 	@$(UV) sync
 
+install-local: ## Install local dependencies using uv
+	@$(UV) pip install -e .
+
 test: ## Run tests with coverage
 	@$(UV) run pytest tests/ -v --cov=src --cov-report=xml --cov-report=term
 
