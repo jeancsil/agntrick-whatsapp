@@ -62,7 +62,6 @@ fix = true
 
 [tool.ruff.lint]
 select = ["E", "I"]
-ignore = ["F821"]
 
 [tool.mypy]
 python_version = "3.12"

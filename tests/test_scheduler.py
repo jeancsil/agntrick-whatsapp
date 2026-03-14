@@ -1,12 +1,11 @@
 """Test cases for scheduling time parsing."""
 
 # Skip tests if agntrick.storage is not available (CI environment)
+import pytest; pytest.importorskip("agntrick.storage")
 agntrick_storage = pytest.importorskip("agntrick.storage")
 
 from datetime import datetime
 from unittest.mock import patch
-
-import pytest
 
 from agntrick_whatsapp.storage.scheduler import TimeParser
 
