@@ -21,9 +21,9 @@ class ParsedCommand:
         self,
         command_type: CommandType,
         command: Optional[str] = None,
-        args: List[str] = None,
+        args: Optional[List[str]] = None,
         raw_text: str = "",
-        metadata: Dict[str, Any] = None
+        metadata: Optional[Dict[str, Any]] = None
     ):
         self.command_type = command_type
         self.command = command
@@ -165,11 +165,11 @@ class CommandParser:
 class CommandHandler:
     """Handler for executing parsed commands."""
 
-    def __init__(self):
-        self.commands = {}
+    def __init__(self) -> None:
+        self.commands: dict[str, Any] = {}
         self.parser = CommandParser()
 
-    def register_command(self, command_name: str, handler):
+    def register_command(self, command_name: str, handler: Any) -> None:
         """Register a command handler."""
         self.commands[command_name] = handler
 

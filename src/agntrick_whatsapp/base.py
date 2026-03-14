@@ -47,6 +47,17 @@ class BaseWhatsAppMessage(ABC):
         self.status = status
         self.metadata = metadata or {}
 
+    @property
+    @property
+    @abstractmethod
+    def text(self) -> str:
+        """Get the text content of the message."""
+        pass
+
+    def get_message_type(self) -> WhatsAppMessageType:
+        """Get the message type."""
+        return WhatsAppMessageType.TEXT
+
     @abstractmethod
     def to_dict(self) -> Dict[str, Any]:
         """Convert message to dictionary representation."""
@@ -73,8 +84,12 @@ class TextMessage(BaseWhatsAppMessage):
         metadata: Optional[Dict[str, Any]] = None
     ):
         super().__init__(message_id, from_number, to_number, timestamp, status, metadata)
-        self.text = text
+        self._text = text
         self.message_type = WhatsAppMessageType.TEXT
+
+    @property
+    def text(self) -> str:
+        return self._text
 
     def to_dict(self) -> Dict[str, Any]:
         return {

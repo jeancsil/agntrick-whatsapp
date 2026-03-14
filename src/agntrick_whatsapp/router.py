@@ -13,7 +13,7 @@ from .config import WhatsAppRouterConfig
 class WhatsAppRouterAgent:
     """Agent that routes WhatsApp messages to appropriate handlers."""
 
-    def __init__(self, config: WhatsAppRouterConfig):
+    def __init__(self, config: WhatsAppRouterConfig) -> None:
         self.config = config
         self.channel = WhatsAppChannel(
             config.whatsapp.access_token,
@@ -27,13 +27,15 @@ class WhatsAppRouterAgent:
         # Initialize with default handlers
         self._register_default_handlers()
 
-    def register_agent(self, name: str, agent_class):
+    def register_agent(self, name: str, agent_class) -> None:
         """Register an agent with the router."""
         self.agent_registry[name] = agent_class
         # Register the agent's commands
         if hasattr(agent_class, 'commands'):
             for command in agent_class.commands:
-                self.command_handler.register_command(command, agent_class.handle)
+                handler = getattr(agent_class, 'handle', None)
+                if handler:
+                    self.command_handler.register_command(command, handler)
 
     async def process_message(self, message_data: Dict[str, Any]) -> Dict[str, Any]:
         """Process an incoming message and route it appropriately."""
@@ -99,10 +101,9 @@ class WhatsAppRouterAgent:
 
             return {"status": "error", "message": error_message}
 
-    def _register_default_handlers(self):
+    def _register_default_handlers(self) -> None:
         """Register default command handlers."""
-        @self.command_handler.register_command("help")
-        async def handle_help(parsed: ParsedCommand):
+        async def handle_help(parsed: ParsedCommand) -> Dict[str, Any]:
             """Handle help command."""
             help_text = """
 Available commands:
@@ -113,13 +114,15 @@ Available commands:
             """
             return {"message": help_text.strip()}
 
-        @self.command_handler.register_command("list")
-        async def handle_list(parsed: ParsedCommand):
+        self.command_handler.register_command("help", handle_help)
+
+        async def handle_list(parsed: ParsedCommand) -> Dict[str, Any]:
             """Handle list command."""
             return {"message": "List functionality not yet implemented"}
 
-        @self.command_handler.register_command("system")
-        async def handle_system(parsed: ParsedCommand):
+        self.command_handler.register_command("list", handle_list)
+
+        async def handle_system(parsed: ParsedCommand) -> Dict[str, Any]:
             """Handle system commands."""
             if not parsed.args:
                 return {"message": "Usage: /system <command>"}
@@ -131,6 +134,8 @@ Available commands:
                 return {"message": "Agntrick WhatsApp v0.1.0"}
             else:
                 return {"message": f"Unknown system command: {command}"}
+
+        self.command_handler.register_command("system", handle_system)
 
     def _determine_agent(self, message: BaseWhatsAppMessage, parsed: ParsedCommand) -> str:
         """Determine which agent should handle the message."""
@@ -148,7 +153,7 @@ Available commands:
         # Fallback to a default agent
         return "default"
 
-    def _update_conversation(self, phone_number: str, agent_name: str, parsed: ParsedCommand):
+    def _update_conversation(self, phone_number: str, agent_name: str, parsed: ParsedCommand) -> None:
         """Update conversation context for a phone number."""
         if phone_number not in self.conversations:
             self.conversations[phone_number] = {
@@ -167,7 +172,7 @@ Available commands:
             "type": parsed.command_type.value
         })
 
-    def _add_to_history(self, message: BaseWhatsAppMessage, direction: str):
+    def _add_to_history(self, message: BaseWhatsAppMessage, direction: str) -> None:
         """Add message to history."""
         history_entry = {
             "id": message.message_id,
@@ -187,6 +192,6 @@ Available commands:
         if len(self.message_history) > self.config.message_history_limit:
             self.message_history = self.message_history[-self.config.message_history_limit:]
 
-    async def _send_error_response(self, message: BaseWhatsAppMessage, error_msg: str):
+    async def _send_error_response(self, message: BaseWhatsAppMessage, error_msg: str) -> None:
         """Send error response to user."""
         await self.channel.send_message(message.from_number, error_msg)

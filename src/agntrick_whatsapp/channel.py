@@ -42,7 +42,7 @@ class WhatsAppChannel(WhatsAppChannelBase):
             await self._simulate_api_call(payload)
 
             # Create a future for tracking message status
-            future = asyncio.Future()
+            future: asyncio.Future[str] = asyncio.Future()
             self.message_queue[message_id] = future
             asyncio.create_task(self._track_message_status(message_id, future))
 
@@ -55,7 +55,7 @@ class WhatsAppChannel(WhatsAppChannelBase):
         payload = {
             "messaging_product": "whatsapp",
             "to": message.to_number,
-            "type": message.message_type.value,
+            "type": message.get_message_type().value,
         }
 
         if isinstance(message, TextMessage):
@@ -97,13 +97,13 @@ class WhatsAppChannel(WhatsAppChannelBase):
             print(f"Error processing incoming message: {e}")
             return None
 
-    async def get_message_status(self, message_id: str) -> Optional[WhatsAppMessageStatus]:
+    async def get_message_status(self, message_id: str) -> WhatsAppMessageStatus:
         """Get the status of a message."""
         # Check if we have a future for this message
         future = self.message_queue.get(message_id)
         if future and future.done():
             return future.result()
-        return None
+        return WhatsAppMessageStatus.SENDING
 
     async def _simulate_api_call(self, payload: Dict[str, Any]) -> None:
         """Simulate API call to WhatsApp."""

@@ -25,9 +25,14 @@ class AudioTranscriber:
         self.chunk_duration = chunk_duration
         self.language = language
         self.timeout = timeout
+        self.recognizer = None
 
         # Initialize speech recognition if available
-        self.recognizer = sr.Recognizer() if SPEECH_RECOGNITION_AVAILABLE else None
+        if SPEECH_RECOGNITION_AVAILABLE:
+            try:
+                self.recognizer = sr.Recognizer()
+            except Exception:
+                self.recognizer = None
 
     async def transcribe_audio(
         self,
@@ -38,10 +43,18 @@ class AudioTranscriber:
         if not SPEECH_RECOGNITION_AVAILABLE:
             return {
                 "status": "error",
-                "message": "Speech recognition library not available. Install with: pip install SpeechRecognition"
+                "message": "Speech recognition library not available. Install with: uv add speechrecognition"
             }
 
         try:
+            # Check if we have speech recognition available
+            if not SPEECH_RECOGNITION_AVAILABLE or not self.recognizer:
+                return {
+                    "status": "error",
+                    "message": "Speech recognition not available",
+                    "timestamp": datetime.now().isoformat()
+                }
+
             # Create audio file from bytes
             audio_file = self._create_audio_file(audio_data, format)
 
@@ -74,6 +87,9 @@ class AudioTranscriber:
 
     async def _transcribe_file(self, audio_file_path: str) -> str:
         """Transcribe audio file using speech recognition."""
+        if not self.recognizer:
+            raise Exception("Speech recognition not available")
+
         with sr.AudioFile(audio_file_path) as source:
             # Adjust for ambient noise
             audio = self.recognizer.record(source)
@@ -103,7 +119,7 @@ class AudioTranscriber:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Process results
-        processed_results = []
+        processed_results: list[dict[str, Any]] = []
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 processed_results.append({

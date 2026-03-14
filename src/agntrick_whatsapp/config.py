@@ -17,18 +17,21 @@ class WhatsAppConfig(BaseModel):
     retry_delay: int = Field(default=5, description="Delay between retries in seconds")
 
     @validator('access_token')
+    @classmethod
     def validate_access_token(cls, v):
         if not v or not v.startswith('EA'):
             raise ValueError('Access token must start with "EA"')
         return v
 
     @validator('phone_number_id')
+    @classmethod
     def validate_phone_number_id(cls, v):
         if not v.isdigit():
             raise ValueError('Phone number ID must be numeric')
         return v
 
     @validator('api_version')
+    @classmethod
     def validate_api_version(cls, v):
         allowed_versions = ['18.0', '17.0', '16.0']
         if v not in allowed_versions:
@@ -46,6 +49,7 @@ class StorageConfig(BaseModel):
     timeout: int = Field(default=30, description="Database operation timeout in seconds")
 
     @validator('type')
+    @classmethod
     def validate_storage_type(cls, v):
         allowed_types = ['sqlite', 'postgres', 'mysql', 'memory']
         if v not in allowed_types:
@@ -63,6 +67,7 @@ class AgentConfig(BaseModel):
     settings: Dict[str, Any] = Field(default_factory=dict, description="Additional agent settings")
 
     @validator('name')
+    @classmethod
     def validate_name(cls, v):
         if not v.isalnum() and '_' not in v:
             raise ValueError('Agent name must be alphanumeric or underscore')
@@ -81,18 +86,21 @@ class WhatsAppRouterConfig(BaseModel):
     debug_mode: bool = Field(default=False, description="Enable debug logging")
 
     @validator('default_agent')
+    @classmethod
     def validate_default_agent(cls, v, values):
         if v and v not in [agent.name for agent in values.get('agents', [])]:
             raise ValueError('Default agent must be in the agents list')
         return v
 
     @validator('message_history_limit')
+    @classmethod
     def validate_message_history_limit(cls, v):
         if v < 0 or v > 10000:
             raise ValueError('Message history limit must be between 0 and 10000')
         return v
 
     @validator('max_conversation_length')
+    @classmethod
     def validate_max_conversation_length(cls, v):
         if v < 10 or v > 1000:
             raise ValueError('Conversation length must be between 10 and 1000')
@@ -122,6 +130,7 @@ class WebhookConfig(BaseModel):
     challenge_timeout: int = Field(default=10, description="Challenge timeout in seconds")
 
     @validator('webhook_url')
+    @classmethod
     def validate_webhook_url(cls, v):
         if not v.startswith(('http://', 'https://')):
             raise ValueError('Webhook URL must start with http:// or https://')
