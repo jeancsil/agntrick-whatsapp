@@ -39,7 +39,8 @@ class WhatsAppRouterAgent:
             # Parse the incoming message
             message = await self.channel.receive_message(message_data)
             if not message:
-                return {"status": "error", "message": "Invalid message data"}
+                # Media/unsupported messages return None - mark as handled
+                return {"status": "handled", "message": "Message type not supported"}
 
             # Store in message history
             self._add_to_history(message, "received")

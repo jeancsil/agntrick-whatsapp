@@ -42,8 +42,8 @@ class TimeParser:
         if time_input.startswith("next "):
             return TimeParser._parse_next_weekday(time_input[5:], now)
 
-        # Handle simple time like "9am", "3:30pm"
-        if re.match(r"\d{1,2}:\d{2}\s*(am|pm)|\d{1,2}\s*(am|pm)", time_input):
+        # Handle simple time like "9am", "3:30pm" or "14:00" (24-hour)
+        if re.match(r"\d{1,2}:\d{2}(\s*(am|pm))?|\d{1,2}\s*(am|pm)", time_input):
             return TimeParser._parse_simple_time(time_input, now)
 
         # Handle day names
@@ -138,7 +138,7 @@ class TimeParser:
 
     @staticmethod
     def _parse_simple_time(time_str: str, base_time: datetime) -> Tuple[datetime, str]:
-        """Parse simple time expressions like "9am", "3:30pm"."""
+        """Parse simple time expressions like "9am", "3:30pm" or "14:00"."""
         time_str = time_str.lower().replace(" ", "")
 
         if "am" in time_str or "pm" in time_str:
@@ -164,6 +164,14 @@ class TimeParser:
 
             result_time = base_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
             return result_time, f"{hour:02d}:{minute:02d} {'PM' if is_pm else 'AM'}"
+
+        # Handle 24-hour format (no am/pm)
+        if re.match(r"^\d{1,2}:\d{2}$", time_str):
+            hour, minute = map(int, time_str.split(":"))
+            if hour > 23 or minute > 59:
+                raise ValueError(f"Invalid 24-hour time: {time_str}")
+            result_time = base_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            return result_time, f"{hour:02d}:{minute:02d}"
 
         raise ValueError(f"Invalid time format: {time_str}")
 

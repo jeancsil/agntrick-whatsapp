@@ -48,7 +48,7 @@ class TestTimeParser:
     def test_parse_relative_time(self):
         """Test parsing relative time."""
         parser = TimeParser()
-        with patch("agntrick_whatsapp.scheduler.datetime") as mock_dt:
+        with patch("agntrick_whatsapp.storage.scheduler.datetime") as mock_dt:
             mock_dt.now.return_value = datetime(2024, 1, 1, 10, 0)
             result, desc = parser.parse_time_input("in 30 minutes")
             expected = datetime(2024, 1, 1, 10, 30)

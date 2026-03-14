@@ -1,5 +1,6 @@
 """Repository for managing tasks and schedules."""
 
+from datetime import datetime
 from typing import Any, List, Optional
 
 from ..database import db_manager
@@ -99,19 +100,36 @@ class TaskRepository:
         """
         task = Task.get_by_id(task_id)
         if task:
-            # Don't query DB again after update - use the in-memory task
-            due_date = kwargs.get("due_date")
-            if isinstance(due_date, str):
-                parsed_time, _ = TimeParser.parse_time_input(due_date)
-                task.update(due_date=parsed_time)
-            elif isinstance(due_date, str):
-                task.update(due_date=due_date)
-            elif "title" in kwargs and isinstance(kwargs["title"], str):
-                task.update(title=kwargs["title"])
-            elif "description" in kwargs and isinstance(kwargs["description"], str):
-                task.update(description=kwargs["description"])
+            # Handle each field independently
+            title: str | None = None
+            description: str | None = None
+            due_date: datetime | None = None
+
+            if kwargs.get("title") is not None and isinstance(kwargs["title"], str):
+                title = kwargs["title"]
+
+            if kwargs.get("description") is not None and isinstance(kwargs["description"], str):
+                description = kwargs["description"]
+
+            if kwargs.get("due_date") is not None:
+                due_date_input = kwargs["due_date"]
+                if isinstance(due_date_input, str):
+                    parsed_time, _ = TimeParser.parse_time_input(due_date_input)
+                    due_date = parsed_time
+                elif due_date_input is not None:
+                    due_date = due_date_input  # type: ignore[assignment]
+
             # Write changes to database
             task._write_to_db()
+
+            # Update in-memory task object
+            if title is not None:
+                task.title = title
+            if description is not None:
+                task.description = description
+            if due_date is not None:
+                task.due_date = due_date
+
             return task
         return None
 

@@ -220,12 +220,11 @@ class Task:
 
     def complete(self) -> None:
         """Mark the task as completed."""
+        query = "UPDATE tasks SET is_completed = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
         conn = db_manager.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                (datetime.now(), self.id),
-            )
+            cursor.execute(query, (self.id,))
             conn.commit()
             self.is_completed = True
             self.updated_at = datetime.now()
@@ -289,51 +288,21 @@ class Task:
         if self.due_date is not None:
             updates.append("due_date = ?")
             params.append(self.due_date.isoformat())
+        if self.is_completed:
+            updates.append("is_completed = 1")
+        else:
+            updates.append("is_completed = 0")
+
         if updates:
             updates.append("updated_at = CURRENT_TIMESTAMP")
-        query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
-        params.append(str(self.id))
+            query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
+            params.append(str(self.id))
 
-        conn = db_manager.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, tuple(params))
-            conn.commit()
-        finally:
-            conn.close()
-        # Write the changes to database
-        self._write_to_db()
+            conn = db_manager.get_connection()
+            try:
+                cursor = conn.cursor()
+                cursor.execute(query, tuple(params))
+                conn.commit()
+            finally:
+                conn.close()
         self.updated_at = datetime.now()
-
-        """Write current in-memory state to database."""
-        updates = []
-        params = []
-        if self.title is not None:
-            updates.append("title = ?")
-            params.append(self.title)
-        if self.description is not None:
-            updates.append("description = ?")
-            params.append(self.description)
-        if self.due_date is not None:
-            updates.append("due_date = ?")
-            params.append(self.due_date.isoformat())
-        if updates:
-            updates.append("updated_at = CURRENT_TIMESTAMP")
-        query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
-        params.append(str(self.id))
-
-        conn = db_manager.get_connection()
-        try:
-            cursor = conn.cursor()
-            cursor.execute(query, tuple(params))
-            conn.commit()
-        finally:
-            conn.close()
-        self.updated_at = datetime.now()
-    def complete(self) -> None:
-        """Mark task as completed."""
-        # Update in-memory state first
-        self.is_completed = True
-        self.updated_at = datetime.now()
-        # Write to database
-        self._write_to_db()
