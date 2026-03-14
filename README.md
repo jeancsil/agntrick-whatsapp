@@ -1,6 +1,6 @@
 # agntrick-whatsapp
 
-WhatsApp integration for Agntrick agents.
+WhatsApp integration for Agntrick agents. Connect LLM's to your personal WhatsApp account with QR code login.
 
 ## Installation
 
@@ -11,6 +11,7 @@ pip install agntrick-whatsapp
 ## Features
 
 - **WhatsApp Channel**: Bidirectional communication via personal WhatsApp account
+- **QR Code Login**: Easy authentication with your phone
 - **Router Agent**: Routes messages to different specialist modes based on commands
 - **Audio Transcription**: Transcribe voice messages using Groq Whisper API
 - **Contact Filtering**: Privacy-focused with allowed contacts only
@@ -50,62 +51,137 @@ pip install agntrick-whatsapp
 Create a `whatsapp.yaml` configuration file:
 
 ```yaml
-model: claude-sonnet-4-6
-mcp_servers: ["fetch", "web-forager"]
+# Agent model configuration
+model: "glm-4.7"
 
-privacy:
-  allowed_contact: "+1234567890"  # Your phone number
-
+# Channel configuration
 channel:
-  storage_path: ~/storage/whatsapp
+  storage_path: "./storage"
 
+# Privacy and filtering - only allow your own number
+privacy:
+  allowed_contact: "+12 6XX X6X XX6"  # Your phone number
+
+# Feature flags
 features:
-  text_messages: true
-  media_messages: true
-  group_messages: false
-  typing_indicators: true
+  text_messages: true       # Enable text messages
+  media_messages: true      # Enable media (images, videos, documents, audio)
+  group_messages: false      # Enable group messages
+  presence_updates: true     # Enable presence (online/typing status)
+  typing_indicators: true    # Send typing indicators when processing
 
-audio_transcriber:
-  model: whisper-large-v3-turbo
-  timeout: 60.0
+# WhatsApp bridge settings
+whatsapp_bridge:
+  auto_setup: true          # Auto-clone Go bridge on first run
+  auto_connect: true        # Auto-connect on startup
+  bridge_timeout_sec: 180   # Max wait for bridge startup
+  poll_interval_sec: 5      # Check for new messages every N seconds
+
+# Logging
+logging:
+  level: "INFO"              # DEBUG, INFO, WARNING, ERROR
+  file: "./logs/agent.log"    # Log file location
 ```
 
 ### 3. Run the WhatsApp Agent
 
+Create a simple Python script `run_whatsapp.py`:
+
 ```python
 import asyncio
 from pathlib import Path
-import yaml
 from agntrick_whatsapp import WhatsAppChannel, WhatsAppRouterAgent
-from agntrick_whatsapp.config import WhatsAppAgentConfig
 
 async def main():
-    # Load configuration from YAML
-    config_path = Path(__file__).parent / "whatsapp.yaml"
-    with open(config_path) as f:
-        config_dict = yaml.safe_load(f)
-
-    config = WhatsAppAgentConfig.model_validate(config_dict)
-
-    # Create channel
+    # Create channel - storage is where session data is saved
     channel = WhatsAppChannel(
-        storage_path=config.get_storage_path(),
-        allowed_contact=config.privacy.allowed_contact,
+        storage_path="./storage",
+        allowed_contact="+34 6XX XXX XXX",  # Your phone number
     )
 
-    # Create router agent
+    # Create and start the router agent
     agent = WhatsAppRouterAgent(
         channel=channel,
-        model_name=config.model,
-        mcp_servers_override=config.mcp_servers,
-        audio_transcriber_config=config.audio_transcriber,
+        model_name="glm-4.7",
     )
 
-    # Start listening
     await agent.start()
 
 asyncio.run(main())
 ```
+
+Run it:
+
+```bash
+python run_whatsapp.py
+```
+
+### 4. Scan QR Code
+
+On first run, you'll see a QR code in your terminal. Open WhatsApp on your phone:
+1. Go to **Settings** > **Linked Devices**
+2. Tap **Link a Device**
+3. Scan the QR code
+
+That's it! Your agent is now connected and will respond to messages from your allowed contact.
+
+### Directory Structure Example
+
+Here's how you can organize a project using the `agntrick-whatsapp` package:
+
+```
+~/code/agntrick/
+├── whatsapp/
+│   ├── run_whatsapp.py          # Main entry point
+│   ├── whatsapp.yaml            # Configuration file
+│   ├── storage/                 # WhatsApp session data (created on first run)
+│   └── logs/                   # Application logs
+└── prompts/                    # Custom prompts for agents
+```
+
+The `storage/` directory contains your WhatsApp session data after QR code login - you don't need to recreate this on subsequent runs.
+
+## First Time Setup
+
+1. **Install system dependencies** (if needed):
+   ```bash
+   # macOS
+   brew install libmagic ffmpeg
+   ```
+
+2. **Install the package**:
+   ```bash
+   pip install agntrick-whatsapp
+   ```
+
+3. **Create your config file** (`whatsapp.yaml`):
+   - Set your phone number in `allowed_contact`
+   - Choose a storage path for session data
+
+4. **Run the agent**:
+   ```bash
+   python run_whatsapp.py
+   ```
+
+5. **Scan the QR code** displayed in your terminal using WhatsApp:
+   - Open WhatsApp → Settings → Linked Devices → Link a Device
+   - Point your camera at the QR code
+
+6. **Start chatting!** Send a message from your allowed contact number.
+
+### Session Persistence
+
+After the first QR code login, your session is saved in the `storage_path` directory. On subsequent runs, you don't need to scan again - the agent will auto-connect using the saved session.
+
+### Resetting the Session
+
+If you need to re-login (new phone number, etc.), simply delete the storage directory:
+
+```bash
+rm -rf ./storage
+```
+
+Then run `python run_whatsapp.py` again to scan a new QR code.
 
 ## Commands
 
@@ -179,7 +255,7 @@ print(result)
 git clone https://github.com/jeancsil/agntrick-whatsapp.git
 cd agntrick-whatsapp
 
-# Install dependencies with uv
+# Install dependencies with uv (required for this project)
 uv sync
 
 # Run tests
@@ -187,7 +263,21 @@ make test
 
 # Run linting
 make check
+
+# Format code
+make format
 ```
+
+### Using as a Local Package
+
+To use your local development version in another project:
+
+```bash
+cd ~/code/agntrick-whatsapp
+uv pip install -e .
+```
+
+Now your other projects will use your local version.
 
 ### Release
 
@@ -197,29 +287,46 @@ make release VERSION=0.4.0
 
 ## Troubleshooting
 
-### neonize Import Error
+### Import Error: "neonize dependency is unavailable"
 
-```
-RuntimeError: neonize dependency is unavailable
-```
+Install system dependencies and reinstall:
 
-Install system dependencies (libmagic) and reinstall:
 ```bash
-brew install libmagic  # macOS
+# macOS
+brew install libmagic
+pip install agntrick-whatsapp --force-reinstall
+
+# Ubuntu/Debian
+sudo apt-get install libmagic1
 pip install agntrick-whatsapp --force-reinstall
 ```
 
 ### QR Code Not Appearing
 
-1. Check storage path permissions
-2. Delete existing session: `rm -rf ~/storage/whatsapp` (take care with this and always ask the user)
+1. Check storage path permissions - ensure the directory is writable
+2. Delete existing session: `rm -rf ./storage` (triggers new QR code on next run)
 3. Restart the agent
 
-### Audio Transcription Fails
+### Session Lost / Need to Re-login
 
-1. Verify Groq API key: `echo $GROQ_AUDIO_API_KEY`
-2. Check ffmpeg: `ffmpeg -version`
-3. Check file size (max 25MB)
+Delete the storage directory and run again:
+
+```bash
+rm -rf ./storage
+python run_whatsapp.py
+```
+
+### Audio Transcription Not Working
+
+1. Verify Groq API key is set: `echo $GROQ_AUDIO_API_KEY`
+2. Check ffmpeg is installed: `ffmpeg -version`
+3. Voice messages must be under 25MB
+
+### Messages Not Being Processed
+
+1. Check that your phone number exactly matches `allowed_contact` in config
+2. Verify logging level - set to `DEBUG` in config to see what's happening
+3. Check logs: `tail -f ./logs/agent.log`
 
 ## License
 
