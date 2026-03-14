@@ -3,11 +3,12 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
 
 
 class WhatsAppMessageType(Enum):
     """Types of WhatsApp messages."""
+
     TEXT = "text"
     IMAGE = "image"
     DOCUMENT = "document"
@@ -21,6 +22,7 @@ class WhatsAppMessageType(Enum):
 
 class WhatsAppMessageStatus(Enum):
     """Message status enums."""
+
     SENDING = "sending"
     SENT = "sent"
     DELIVERED = "delivered"
@@ -38,7 +40,7 @@ class BaseWhatsAppMessage(ABC):
         to_number: str,
         timestamp: datetime,
         status: WhatsAppMessageStatus = WhatsAppMessageStatus.SENDING,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         self.message_id = message_id
         self.from_number = from_number
@@ -47,7 +49,6 @@ class BaseWhatsAppMessage(ABC):
         self.status = status
         self.metadata = metadata or {}
 
-    @property
     @property
     @abstractmethod
     def text(self) -> str:
@@ -81,7 +82,7 @@ class TextMessage(BaseWhatsAppMessage):
         text: str,
         timestamp: datetime,
         status: WhatsAppMessageStatus = WhatsAppMessageStatus.SENDING,
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(message_id, from_number, to_number, timestamp, status, metadata)
         self._text = text
@@ -100,7 +101,7 @@ class TextMessage(BaseWhatsAppMessage):
             "status": self.status.value,
             "message_type": self.message_type.value,
             "text": self.text,
-            "metadata": self.metadata
+            "metadata": self.metadata,
         }
 
     @classmethod
@@ -112,7 +113,7 @@ class TextMessage(BaseWhatsAppMessage):
             text=data["text"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
             status=WhatsAppMessageStatus(data.get("status", "sending")),
-            metadata=data.get("metadata", {})
+            metadata=data.get("metadata", {}),
         )
 
 

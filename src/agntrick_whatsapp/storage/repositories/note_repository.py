@@ -80,7 +80,7 @@ class NoteRepository:
                 SET content = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
-                (content, note_id)
+                (content, note_id),
             )
             conn.commit()
             if cursor.rowcount > 0:

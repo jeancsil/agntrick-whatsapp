@@ -1,6 +1,7 @@
 """Pydantic configuration models for WhatsApp integration."""
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field, validator
 
 
@@ -16,26 +17,26 @@ class WhatsAppConfig(BaseModel):
     retry_attempts: int = Field(default=3, description="Number of retry attempts for failed messages")
     retry_delay: int = Field(default=5, description="Delay between retries in seconds")
 
-    @validator('access_token')
+    @validator("access_token")
     @classmethod
-    def validate_access_token(cls, v):
-        if not v or not v.startswith('EA'):
+    def validate_access_token(cls, v: str) -> str:
+        if not v or not v.startswith("EA"):
             raise ValueError('Access token must start with "EA"')
         return v
 
-    @validator('phone_number_id')
+    @validator("phone_number_id")
     @classmethod
-    def validate_phone_number_id(cls, v):
+    def validate_phone_number_id(cls, v: str) -> str:
         if not v.isdigit():
-            raise ValueError('Phone number ID must be numeric')
+            raise ValueError("Phone number ID must be numeric")
         return v
 
-    @validator('api_version')
+    @validator("api_version")
     @classmethod
-    def validate_api_version(cls, v):
-        allowed_versions = ['18.0', '17.0', '16.0']
+    def validate_api_version(cls, v: str) -> str:
+        allowed_versions = ["18.0", "17.0", "16.0"]
         if v not in allowed_versions:
-            raise ValueError(f'API version must be one of: {", ".join(allowed_versions)}')
+            raise ValueError(f"API version must be one of: {', '.join(allowed_versions)}")
         return v
 
 
@@ -48,12 +49,12 @@ class StorageConfig(BaseModel):
     max_connections: int = Field(default=10, description="Maximum database connections")
     timeout: int = Field(default=30, description="Database operation timeout in seconds")
 
-    @validator('type')
+    @validator("type")
     @classmethod
-    def validate_storage_type(cls, v):
-        allowed_types = ['sqlite', 'postgres', 'mysql', 'memory']
+    def validate_storage_type(cls, v: str) -> str:
+        allowed_types = ["sqlite", "postgres", "mysql", "memory"]
         if v not in allowed_types:
-            raise ValueError(f'Storage type must be one of: {", ".join(allowed_types)}')
+            raise ValueError(f"Storage type must be one of: {', '.join(allowed_types)}")
         return v
 
 
@@ -66,11 +67,11 @@ class AgentConfig(BaseModel):
     commands: List[str] = Field(default_factory=list, description="List of supported commands")
     settings: Dict[str, Any] = Field(default_factory=dict, description="Additional agent settings")
 
-    @validator('name')
+    @validator("name")
     @classmethod
-    def validate_name(cls, v):
-        if not v.isalnum() and '_' not in v:
-            raise ValueError('Agent name must be alphanumeric or underscore')
+    def validate_name(cls, v: str) -> str:
+        if not v.isalnum() and "_" not in v:
+            raise ValueError("Agent name must be alphanumeric or underscore")
         return v
 
 
@@ -85,39 +86,41 @@ class WhatsAppRouterConfig(BaseModel):
     max_conversation_length: int = Field(default=100, description="Maximum conversation length")
     debug_mode: bool = Field(default=False, description="Enable debug logging")
 
-    @validator('default_agent')
+    @validator("default_agent")
     @classmethod
-    def validate_default_agent(cls, v, values):
-        if v and v not in [agent.name for agent in values.get('agents', [])]:
-            raise ValueError('Default agent must be in the agents list')
+    def validate_default_agent(cls, v: Optional[str], values: dict) -> Optional[str]:
+        if v and v not in [agent.name for agent in values.get("agents", [])]:
+            raise ValueError("Default agent must be in the agents list")
         return v
 
-    @validator('message_history_limit')
+    @validator("message_history_limit")
     @classmethod
-    def validate_message_history_limit(cls, v):
+    def validate_message_history_limit(cls, v: int) -> int:
         if v < 0 or v > 10000:
-            raise ValueError('Message history limit must be between 0 and 10000')
+            raise ValueError("Message history limit must be between 0 and 10000")
         return v
 
-    @validator('max_conversation_length')
+    @validator("max_conversation_length")
     @classmethod
-    def validate_max_conversation_length(cls, v):
+    def validate_max_conversation_length(cls, v: int) -> int:
         if v < 10 or v > 1000:
-            raise ValueError('Conversation length must be between 10 and 1000')
+            raise ValueError("Conversation length must be between 10 and 1000")
         return v
 
     @classmethod
-    def load_from_file(cls, file_path: str) -> 'WhatsAppRouterConfig':
+    def load_from_file(cls, file_path: str) -> "WhatsAppRouterConfig":
         """Load configuration from file."""
         import json
-        with open(file_path, 'r') as f:
+
+        with open(file_path, "r") as f:
             data = json.load(f)
         return cls(**data)
 
     def save_to_file(self, file_path: str) -> None:
         """Save configuration to file."""
         import json
-        with open(file_path, 'w') as f:
+
+        with open(file_path, "w") as f:
             json.dump(self.dict(), f, indent=2)
 
 
@@ -129,9 +132,9 @@ class WebhookConfig(BaseModel):
     webhook_url: str = Field(..., description="Webhook URL")
     challenge_timeout: int = Field(default=10, description="Challenge timeout in seconds")
 
-    @validator('webhook_url')
+    @validator("webhook_url")
     @classmethod
-    def validate_webhook_url(cls, v):
-        if not v.startswith(('http://', 'https://')):
-            raise ValueError('Webhook URL must start with http:// or https://')
+    def validate_webhook_url(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("Webhook URL must start with http:// or https://")
         return v

@@ -26,6 +26,7 @@ dependencies = [
     "pyyaml>=6.0",
     "dateparser>=1.3.0",
     "croniter>=6.0.0",
+    "python-dateutil>=2.9.0.post0",
 ]
 
 [project.optional-dependencies]
@@ -69,3 +70,12 @@ warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
 check_untyped_defs = true
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.6",
+    "types-croniter>=6.0.0.20250809",
+    "types-python-dateutil>=2.9.0.20260305",
+]

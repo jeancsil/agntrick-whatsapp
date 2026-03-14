@@ -2,7 +2,7 @@
 
 import re
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple
 
 import croniter
 from dateutil.relativedelta import relativedelta

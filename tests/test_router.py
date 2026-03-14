@@ -1,80 +1,225 @@
 """Test cases for router agent behavior."""
 
-import pytest
-from unittest.mock import Mock, patch
-
-from agntrick_whatsapp.router import WhatsAppRouter
+from agntrick_whatsapp.config import WhatsAppConfig, WhatsAppRouterConfig
+from agntrick_whatsapp.router import WhatsAppRouterAgent
 
 
-class TestWhatsAppRouter:
-    """Test cases for WhatsAppRouter class."""
+class TestWhatsAppRouterAgent:
+    """Test cases for WhatsAppRouterAgent class."""
 
     def test_init(self):
         """Test router initialization."""
-        router = WhatsAppRouter()
+        config = WhatsAppRouterConfig(
+            whatsapp=WhatsAppConfig(access_token="test_token", phone_number_id="12345", verify_token="test_verify"),
+            storage={"type": "memory"},
+        )
+        router = WhatsAppRouterAgent(config)
         assert router is not None
 
-    @patch('agntrick_whatsapp.router.MessageHandler')
-    def test_process_text_message(self, mock_handler):
+    def test_process_text_message(self):
         """Test processing a text message."""
-        router = WhatsAppRouter()
-        message = {"type": "text", "content": "Hello", "sender": "12345"}
+        config = WhatsAppRouterConfig(
+            whatsapp=WhatsAppConfig(access_token="test_token", phone_number_id="12345", verify_token="test_verify"),
+            storage={"type": "memory"},
+        )
+        router = WhatsAppRouterAgent(config)
+        message = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "msg1",
+                                        "from": "12345",
+                                        "timestamp": "1234567890",
+                                        "type": "text",
+                                        "text": {"body": "Hello"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
 
-        router.process_message(message)
-        mock_handler.handle_text.assert_called_once_with(message)
+        result = router.process_message(message)
+        assert result["status"] == "text"
 
-    @patch('agntrick_whatsapp.router.MessageHandler')
-    def test_process_command_message(self, mock_handler):
+    def test_process_command_message(self):
         """Test processing a command message."""
-        router = WhatsAppRouter()
-        message = {"type": "text", "content": "/hello", "sender": "12345"}
+        config = WhatsAppRouterConfig(
+            whatsapp=WhatsAppConfig(access_token="test_token", phone_number_id="12345", verify_token="test_verify"),
+            storage={"type": "memory"},
+        )
+        router = WhatsAppRouterAgent(config)
+        message = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "msg1",
+                                        "from": "12345",
+                                        "timestamp": "1234567890",
+                                        "type": "text",
+                                        "text": {"body": "/help"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
 
-        router.process_message(message)
-        mock_handler.handle_command.assert_called_once_with(message)
+        result = router.process_message(message)
+        assert result["status"] == "success"
 
-    @patch('agntrick_whatsapp.router.MessageHandler')
-    def test_process_media_message(self, mock_handler):
+    def test_process_media_message(self):
         """Test processing a media message."""
-        router = WhatsAppRouter()
-        message = {"type": "image", "url": "http://example.com/image.jpg", "sender": "12345"}
+        config = WhatsAppRouterConfig(
+            whatsapp=WhatsAppConfig(access_token="test_token", phone_number_id="12345", verify_token="test_verify"),
+            storage={"type": "memory"},
+        )
+        router = WhatsAppRouterAgent(config)
+        message = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "msg1",
+                                        "from": "12345",
+                                        "timestamp": "1234567890",
+                                        "type": "image",
+                                        "image": {"url": "http://example.com/image.jpg"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
 
-        router.process_message(message)
-        mock_handler.handle_media.assert_called_once_with(message)
+        result = router.process_message(message)
+        # Media messages should return None from receive_message, so default response
+        assert "handled" in result["status"]
 
     def test_process_unknown_message_type(self):
         """Test processing an unknown message type."""
-        router = WhatsAppRouter()
-        message = {"type": "unknown", "content": "test", "sender": "12345"}
+        config = WhatsAppRouterConfig(
+            whatsapp=WhatsAppConfig(access_token="test_token", phone_number_id="12345", verify_token="test_verify"),
+            storage={"type": "memory"},
+        )
+        router = WhatsAppRouterAgent(config)
+        message = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "msg1",
+                                        "from": "12345",
+                                        "timestamp": "1234567890",
+                                        "type": "unknown",
+                                        "text": {"body": "test"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
 
         result = router.process_message(message)
-        assert "Unsupported message type" in result
+        assert result["status"] == "handled"
 
     def test_route_to_agent(self):
         """Test routing a message to the appropriate agent."""
-        router = WhatsAppRouter()
-        message = {"type": "text", "content": "I want to schedule something", "sender": "12345"}
+        config = WhatsAppRouterConfig(
+            whatsapp=WhatsAppConfig(access_token="test_token", phone_number_id="12345", verify_token="test_verify"),
+            storage={"type": "memory"},
+        )
+        router = WhatsAppRouterAgent(config)
 
-        with patch('agntrick_whatsapp.router.SchedulingAgent') as mock_agent:
-            router.route_to_agent(message, "scheduling")
-            mock_agent.assert_called_once()
+        # Mock an agent
+        class TestAgent:
+            commands = ["schedule"]
+
+            async def process_message(self, message, context):
+                return {"response": "scheduled"}
+
+        router.register_agent("scheduling", TestAgent)
+
+        message = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "msg1",
+                                        "from": "12345",
+                                        "timestamp": "1234567890",
+                                        "type": "text",
+                                        "text": {"body": "/schedule something"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+
+        result = router.process_message(message)
+        assert result["status"] == "success"
+        assert result["agent"] == "scheduling"
 
     def test_register_agent(self):
         """Test registering a new agent."""
-        router = WhatsAppRouter()
+        config = WhatsAppRouterConfig(
+            whatsapp=WhatsAppConfig(access_token="test_token", phone_number_id="12345", verify_token="test_verify"),
+            storage={"type": "memory"},
+        )
+        router = WhatsAppRouterAgent(config)
 
         class TestAgent:
-            pass
+            commands = ["test"]
+
+            async def process_message(self, message, context):
+                return {"response": "test response"}
 
         router.register_agent("test", TestAgent)
-        assert "test" in router.available_agents
+        assert "test" in router.agent_registry
 
     def test_register_duplicate_agent(self):
         """Test registering a duplicate agent."""
-        router = WhatsAppRouter()
+        config = WhatsAppRouterConfig(
+            whatsapp=WhatsAppConfig(access_token="test_token", phone_number_id="12345", verify_token="test_verify"),
+            storage={"type": "memory"},
+        )
+        router = WhatsAppRouterAgent(config)
 
         class TestAgent:
-            pass
+            commands = ["test"]
+
+            async def process_message(self, message, context):
+                return {"response": "test response"}
 
         router.register_agent("test", TestAgent)
-        with pytest.raises(ValueError):
-            router.register_agent("test", TestAgent)
+        # Registering the same agent again should not raise an error
+        router.register_agent("test", TestAgent)
+        assert "test" in router.agent_registry

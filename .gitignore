@@ -51,5 +51,5 @@ Thumbs.db
 *.log
 .env
 .env.local
-storage/
+data/
 *.db

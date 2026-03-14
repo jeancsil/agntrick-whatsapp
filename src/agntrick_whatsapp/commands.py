@@ -1,12 +1,13 @@
 """Command parsing and handling for WhatsApp integration."""
 
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
 from enum import Enum
+from typing import Any, Dict, List, Optional
 
 
 class CommandType(Enum):
     """Types of commands that can be parsed."""
+
     TEXT = "text"
     COMMAND = "command"
     SCHEDULE = "schedule"
@@ -23,7 +24,7 @@ class ParsedCommand:
         command: Optional[str] = None,
         args: Optional[List[str]] = None,
         raw_text: str = "",
-        metadata: Optional[Dict[str, Any]] = None
+        metadata: Optional[Dict[str, Any]] = None,
     ):
         self.command_type = command_type
         self.command = command
@@ -38,7 +39,7 @@ class ParsedCommand:
             "command": self.command,
             "args": self.args,
             "raw_text": self.raw_text,
-            "metadata": self.metadata
+            "metadata": self.metadata,
         }
 
 
@@ -60,10 +61,7 @@ class CommandParser:
         text = text.strip()
 
         if not text:
-            return {
-                "command": None,
-                "args": []
-            }
+            return {"command": None, "args": []}
 
         # Check for command patterns
         for command_type, pattern in self.command_patterns.items():
@@ -83,28 +81,25 @@ class CommandParser:
 
         # If no command prefix, treat as regular text
         if not text.startswith(self.prefix):
-            return {
-                "command": None,
-                "args": []
-            }
+            return {"command": None, "args": []}
 
         # Generic command with prefix
-        parts = text[len(self.prefix):].strip().split(maxsplit=1)
+        parts = text[len(self.prefix) :].strip().split(maxsplit=1)
         command = parts[0] if parts else None
         args = parts[1].split() if len(parts) > 1 else []
 
-        return {
-            "command": command,
-            "args": args
-        }
+        return {"command": command, "args": args}
 
-    def _parse_schedule_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
+    def _parse_schedule_command(self, text: str, match: re.Match, args: List[str]) -> dict:
         """Parse schedule command with special handling."""
         # Look for recurring patterns like "every", "daily", "weekly"
         recurring_patterns = {
             "every": re.compile(r"every\s+(\d+)\s+(minutes?|hours?|days?|weeks?)", re.IGNORECASE),
             "daily": re.compile(r"daily\s+at\s+(\d{1,2}:\d{2})", re.IGNORECASE),
-            "weekly": re.compile(r"weekly\s+on\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)", re.IGNORECASE),
+            "weekly": re.compile(
+                r"weekly\s+on\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)",
+                re.IGNORECASE,
+            ),
         }
 
         metadata = {}
@@ -124,31 +119,19 @@ class CommandParser:
             if not any(re.search(pattern, part) for pattern in recurring_patterns.values()):
                 task_parts.append(part)
 
-        return {
-            "command": "schedule",
-            "args": task_parts
-        }
+        return {"command": "schedule", "args": task_parts}
 
-    def _parse_list_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
+    def _parse_list_command(self, text: str, match: re.Match, args: List[str]) -> dict:
         """Parse list command."""
-        return {
-            "command": "list",
-            "args": args
-        }
+        return {"command": "list", "args": args}
 
-    def _parse_help_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
+    def _parse_help_command(self, text: str, match: re.Match, args: List[str]) -> dict:
         """Parse help command."""
-        return {
-            "command": "help",
-            "args": args
-        }
+        return {"command": "help", "args": args}
 
-    def _parse_system_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
+    def _parse_system_command(self, text: str, match: re.Match, args: List[str]) -> dict:
         """Parse system command."""
-        return {
-            "command": "system",
-            "args": args
-        }
+        return {"command": "system", "args": args}
 
 
 class CommandHandler:
@@ -168,24 +151,18 @@ class CommandHandler:
 
         if parsed.get("command") is None:
             return await self._handle_text_message(parsed)
-        elif parsed.get("command") in self.commands:
-            handler = self.commands[parsed.get("command")]
+        elif parsed.get("command") and parsed.get("command") in self.commands:
+            command = parsed.get("command")
+            if command:
+                handler = self.commands[command]  # type: ignore[index]
             if callable(handler):
                 result = await handler(parsed)
                 if isinstance(result, dict):
                     return result
             return {"status": "error", "message": "Handler returned invalid response"}
         else:
-            return {
-                "status": "error",
-                "message": f"Unknown command: {parsed.get('command')}",
-                "parsed": parsed
-            }
+            return {"status": "error", "message": f"Unknown command: {parsed.get('command')}", "parsed": parsed}
 
     async def _handle_text_message(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
         """Handle regular text messages."""
-        return {
-            "status": "text",
-            "message": parsed.get("raw_text", ""),
-            "parsed": parsed
-        }
+        return {"status": "text", "message": parsed.get("raw_text", ""), "parsed": parsed}

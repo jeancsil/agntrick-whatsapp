@@ -10,6 +10,7 @@ from .database import db_manager
 @dataclass
 class Note:
     """Represents a note in the storage system."""
+
     id: int
     thread_id: str
     content: str
@@ -41,7 +42,7 @@ class Note:
                 thread_id=thread_id,
                 content=content,
                 created_at=datetime.now(),
-                updated_at=datetime.now()
+                updated_at=datetime.now(),
             )
         finally:
             conn.close()
@@ -68,7 +69,7 @@ class Note:
                     thread_id=row["thread_id"],
                     content=row["content"],
                     created_at=datetime.fromisoformat(row["created_at"]),
-                    updated_at=datetime.fromisoformat(row["updated_at"])
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
                 )
                 for row in rows
             ]
@@ -97,7 +98,7 @@ class Note:
                     thread_id=row["thread_id"],
                     content=row["content"],
                     created_at=datetime.fromisoformat(row["created_at"]),
-                    updated_at=datetime.fromisoformat(row["updated_at"])
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
                 )
             return None
         finally:
@@ -107,6 +108,7 @@ class Note:
 @dataclass
 class Task:
     """Represents a task in the storage system."""
+
     id: int
     thread_id: str
     title: str
@@ -117,7 +119,9 @@ class Task:
     updated_at: datetime
 
     @classmethod
-    def create(cls, thread_id: str, title: str, description: Optional[str] = None, due_date: Optional[datetime] = None) -> "Task":
+    def create(
+        cls, thread_id: str, title: str, description: Optional[str] = None, due_date: Optional[datetime] = None
+    ) -> "Task":
         """Create a new task.
 
         Args:
@@ -136,10 +140,7 @@ class Task:
         conn = db_manager.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute(
-                query,
-                (thread_id, title, description, due_date.isoformat() if due_date else None)
-            )
+            cursor.execute(query, (thread_id, title, description, due_date.isoformat() if due_date else None))
             conn.commit()
             return cls(
                 id=int(cursor.lastrowid) if cursor.lastrowid else 0,
@@ -149,7 +150,7 @@ class Task:
                 due_date=due_date,
                 is_completed=False,
                 created_at=datetime.now(),
-                updated_at=datetime.now()
+                updated_at=datetime.now(),
             )
         finally:
             conn.close()
@@ -179,7 +180,7 @@ class Task:
                     due_date=datetime.fromisoformat(row["due_date"]) if row["due_date"] else None,
                     is_completed=bool(row["is_completed"]),
                     created_at=datetime.fromisoformat(row["created_at"]),
-                    updated_at=datetime.fromisoformat(row["updated_at"])
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
                 )
                 for row in rows
             ]
@@ -211,7 +212,7 @@ class Task:
                     due_date=datetime.fromisoformat(row["due_date"]) if row["due_date"] else None,
                     is_completed=bool(row["is_completed"]),
                     created_at=datetime.fromisoformat(row["created_at"]),
-                    updated_at=datetime.fromisoformat(row["updated_at"])
+                    updated_at=datetime.fromisoformat(row["updated_at"]),
                 )
             return None
         finally:
@@ -222,14 +223,18 @@ class Task:
         conn = db_manager.get_connection()
         try:
             cursor = conn.cursor()
-            cursor.execute("UPDATE tasks SET is_completed = TRUE, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (self.id,))
+            cursor.execute(
+                (datetime.now(), self.id),
+            )
             conn.commit()
             self.is_completed = True
             self.updated_at = datetime.now()
         finally:
             conn.close()
 
-    def update(self, title: Optional[str] = None, description: Optional[str] = None, due_date: Optional[datetime] = None) -> None:
+    def update(
+        self, title: Optional[str] = None, description: Optional[str] = None, due_date: Optional[datetime] = None
+    ) -> None:
         """Update task details.
 
         Args:
@@ -270,3 +275,65 @@ class Task:
             if due_date is not None:
                 self.due_date = due_date
             self.updated_at = datetime.now()
+
+    def _write_to_db(self) -> None:
+        """Write current in-memory state to database."""
+        updates = []
+        params = []
+        if self.title is not None:
+            updates.append("title = ?")
+            params.append(self.title)
+        if self.description is not None:
+            updates.append("description = ?")
+            params.append(self.description)
+        if self.due_date is not None:
+            updates.append("due_date = ?")
+            params.append(self.due_date.isoformat())
+        if updates:
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+        query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
+        params.append(str(self.id))
+
+        conn = db_manager.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            conn.commit()
+        finally:
+            conn.close()
+        # Write the changes to database
+        self._write_to_db()
+        self.updated_at = datetime.now()
+
+        """Write current in-memory state to database."""
+        updates = []
+        params = []
+        if self.title is not None:
+            updates.append("title = ?")
+            params.append(self.title)
+        if self.description is not None:
+            updates.append("description = ?")
+            params.append(self.description)
+        if self.due_date is not None:
+            updates.append("due_date = ?")
+            params.append(self.due_date.isoformat())
+        if updates:
+            updates.append("updated_at = CURRENT_TIMESTAMP")
+        query = f"UPDATE tasks SET {', '.join(updates)} WHERE id = ?"
+        params.append(str(self.id))
+
+        conn = db_manager.get_connection()
+        try:
+            cursor = conn.cursor()
+            cursor.execute(query, tuple(params))
+            conn.commit()
+        finally:
+            conn.close()
+        self.updated_at = datetime.now()
+    def complete(self) -> None:
+        """Mark task as completed."""
+        # Update in-memory state first
+        self.is_completed = True
+        self.updated_at = datetime.now()
+        # Write to database
+        self._write_to_db()

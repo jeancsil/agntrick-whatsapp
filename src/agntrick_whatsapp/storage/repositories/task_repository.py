@@ -1,7 +1,6 @@
 """Repository for managing tasks and schedules."""
 
-from datetime import datetime
-from typing import List, Optional, Any
+from typing import Any, List, Optional
 
 from ..database import db_manager
 from ..models import Task
@@ -11,7 +10,9 @@ from ..scheduler import TimeParser
 class TaskRepository:
     """Repository for task operations."""
 
-    def create(self, thread_id: str, title: str, description: Optional[str] = None, due_date: Optional[str] = None) -> Task:
+    def create(
+        self, thread_id: str, title: str, description: Optional[str] = None, due_date: Optional[str] = None
+    ) -> Task:
         """Create a new task.
 
         Args:
@@ -98,17 +99,19 @@ class TaskRepository:
         """
         task = Task.get_by_id(task_id)
         if task:
-            # Parse due_date if provided
-            due_date = kwargs.get('due_date')
+            # Don't query DB again after update - use the in-memory task
+            due_date = kwargs.get("due_date")
             if isinstance(due_date, str):
                 parsed_time, _ = TimeParser.parse_time_input(due_date)
                 task.update(due_date=parsed_time)
             elif isinstance(due_date, str):
                 task.update(due_date=due_date)
-            elif 'title' in kwargs and isinstance(kwargs['title'], str):
-                task.update(title=kwargs['title'])
-            elif 'description' in kwargs and isinstance(kwargs['description'], str):
-                task.update(description=kwargs['description'])
+            elif "title" in kwargs and isinstance(kwargs["title"], str):
+                task.update(title=kwargs["title"])
+            elif "description" in kwargs and isinstance(kwargs["description"], str):
+                task.update(description=kwargs["description"])
+            # Write changes to database
+            task._write_to_db()
             return task
         return None
 
@@ -139,7 +142,7 @@ class TaskRepository:
                     "cron_expression": row["cron_expression"],
                     "next_run": row["next_run"],
                     "is_active": row["is_active"],
-                    "created_at": row["created_at"]
+                    "created_at": row["created_at"],
                 }
                 for row in rows
             ]
@@ -172,7 +175,7 @@ class TaskRepository:
                 INSERT INTO schedules (thread_id, task_id, cron_expression, next_run)
                 VALUES (?, ?, ?, ?)
                 """,
-                (thread_id, task_id, cron_expression, next_run.isoformat())
+                (thread_id, task_id, cron_expression, next_run.isoformat()),
             )
             conn.commit()
 
@@ -183,7 +186,7 @@ class TaskRepository:
                 "cron_expression": cron_expression,
                 "next_run": next_run,
                 "is_active": True,
-                "created_at": next_run
+                "created_at": next_run,
             }
         finally:
             conn.close()
@@ -214,7 +217,7 @@ class TaskRepository:
                 SET cron_expression = ?, next_run = ?
                 WHERE id = ?
                 """,
-                (cron_expression, next_run.isoformat(), schedule_id)
+                (cron_expression, next_run.isoformat(), schedule_id),
             )
             conn.commit()
 
@@ -229,7 +232,7 @@ class TaskRepository:
                     "cron_expression": row["cron_expression"],
                     "next_run": row["next_run"],
                     "is_active": row["is_active"],
-                    "created_at": row["created_at"]
+                    "created_at": row["created_at"],
                 }
             return None
         finally:

@@ -1,9 +1,7 @@
 """Database setup and configuration for WhatsApp storage."""
 
 import sqlite3
-import os
 from pathlib import Path
-from typing import ContextManager
 
 from ..constants import DATA_DIR
 
@@ -53,6 +51,15 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    def close(self) -> None:
+        """Close database connection and clean up resources."""
+        # Nothing to close since connections are transient in get_connection()
+        pass
+
+    def init_database(self) -> None:
+        """Initialize database and create all necessary tables."""
+        self.create_tables()
+
     def create_tables(self) -> None:
         """Create all necessary database tables."""
         queries = [
@@ -82,11 +89,11 @@ class DatabaseManager:
                 is_active BOOLEAN DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (task_id) REFERENCES tasks (id)
-            )"""
+            )""",
         ]
 
         for query in queries:
-            cursor = self.execute(query)
+            self.execute(query)
 
 
 # Global database instance

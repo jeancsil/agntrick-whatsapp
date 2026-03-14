@@ -2,15 +2,9 @@
 
 import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, Optional, Union
 
-from .base import (
-    BaseWhatsAppMessage,
-    TextMessage,
-    WhatsAppChannelBase,
-    WhatsAppMessageStatus,
-    WhatsAppMessageType
-)
+from .base import BaseWhatsAppMessage, TextMessage, WhatsAppChannelBase, WhatsAppMessageStatus
 
 
 class WhatsAppChannel(WhatsAppChannelBase):
@@ -30,7 +24,7 @@ class WhatsAppChannel(WhatsAppChannelBase):
                 from_number=self.phone_number_id,
                 to_number=to_number,
                 text=message,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
             )
 
         payload = self._build_message_payload(message)
@@ -59,15 +53,15 @@ class WhatsAppChannel(WhatsAppChannelBase):
         }
 
         if isinstance(message, TextMessage):
-            payload["text"] = {"body": message.text}
+            payload["text"] = {"body": message.text}  # type: ignore
 
         return payload
 
     async def receive_message(self, message_data: Dict[str, Any]) -> Optional[BaseWhatsAppMessage]:
         """Process incoming message data from webhook."""
         try:
-            entry = message_data.get("entry", [{}])[0]
-            changes = entry.get("changes", [{}])[0]
+            entry = message_data.get("entry", [{}])[0] if isinstance(message_data.get("entry"), list) else {}
+            changes = entry.get("changes", [{}])[0] if isinstance(entry.get("changes"), list) else {}
             value = changes.get("value", {})
             messages = value.get("messages", [])
 
@@ -87,7 +81,7 @@ class WhatsAppChannel(WhatsAppChannelBase):
                     from_number=from_number,
                     to_number=self.phone_number_id,
                     text=text,
-                    timestamp=timestamp
+                    timestamp=timestamp,
                 )
 
             # Handle other message types as needed
@@ -97,12 +91,14 @@ class WhatsAppChannel(WhatsAppChannelBase):
             print(f"Error processing incoming message: {e}")
             return None
 
-    async def get_message_status(self, message_id: str) -> WhatsAppMessageStatus:
+    async def get_message_status(self, message_id: str) -> Optional[WhatsAppMessageStatus]:
         """Get the status of a message."""
         # Check if we have a future for this message
         future = self.message_queue.get(message_id)
         if future and future.done():
-            return future.result()
+            result = future.result()
+            if isinstance(result, WhatsAppMessageStatus):
+                return result
         return WhatsAppMessageStatus.SENDING
 
     async def _simulate_api_call(self, payload: Dict[str, Any]) -> None:

@@ -1,12 +1,11 @@
 """WhatsAppRouterAgent for routing messages to appropriate agents."""
 
-import asyncio
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List
 
-from .base import BaseWhatsAppMessage, TextMessage, WhatsAppMessageStatus
+from .base import BaseWhatsAppMessage
 from .channel import WhatsAppChannel
-from .commands import CommandHandler, CommandParser, ParsedCommand
+from .commands import CommandHandler, CommandParser
 from .config import WhatsAppRouterConfig
 
 
@@ -15,10 +14,7 @@ class WhatsAppRouterAgent:
 
     def __init__(self, config: WhatsAppRouterConfig) -> None:
         self.config = config
-        self.channel = WhatsAppChannel(
-            config.whatsapp.access_token,
-            config.whatsapp.phone_number_id
-        )
+        self.channel = WhatsAppChannel(config.whatsapp.access_token, config.whatsapp.phone_number_id)
         self.command_handler = CommandHandler()
         self.message_history: List[Dict[str, Any]] = []
         self.agent_registry: Dict[str, Any] = {}
@@ -27,13 +23,13 @@ class WhatsAppRouterAgent:
         # Initialize with default handlers
         self._register_default_handlers()
 
-    def register_agent(self, name: str, agent_class) -> None:
+    def register_agent(self, name: str, agent_class: type) -> None:
         """Register an agent with the router."""
         self.agent_registry[name] = agent_class
         # Register the agent's commands
-        if hasattr(agent_class, 'commands'):
+        if hasattr(agent_class, "commands"):
             for command in agent_class.commands:
-                handler = getattr(agent_class, 'handle', None)
+                handler = getattr(agent_class, "handle", None)
                 if handler:
                     self.command_handler.register_command(command, handler)
 
@@ -50,13 +46,13 @@ class WhatsAppRouterAgent:
 
             # Parse as command
             parser = CommandParser()
-            parsed = parser.parse(message.text if hasattr(message, 'text') else "")
+            parsed = parser.parse(message.text if hasattr(message, "text") else "")
 
             # Handle commands
             if parsed.get("command"):
                 result = await self.command_handler.handle(message.text)
                 if result.get("status") == "error":
-                    return await self._send_error_response(message, result["message"])
+                    return await self._send_error_response(message, result["message"])  # type: ignore[func-returns-value,return-value]
                 else:
                     # Send response back
                     await self.channel.send_message(message.from_number, result.get("message", ""))
@@ -71,20 +67,13 @@ class WhatsAppRouterAgent:
                 self._update_conversation(message.from_number, agent_name, parsed)
 
                 # Process with agent
-                result = await agent.process_message(
-                    message,
-                    self.conversations.get(message.from_number, {})
-                )
+                result = await agent.process_message(message, self.conversations.get(message.from_number, {}))
 
                 # Send response
                 if result and "response" in result:
                     await self.channel.send_message(message.from_number, result["response"])
 
-                return {
-                    "status": "success",
-                    "agent": agent_name,
-                    "message": "Message routed to agent"
-                }
+                return {"status": "success", "agent": agent_name, "message": "Message routed to agent"}
             else:
                 # No suitable agent found
                 response = "I'm not sure how to handle this message. Try using a command like /help for assistance."
@@ -103,6 +92,7 @@ class WhatsAppRouterAgent:
 
     def _register_default_handlers(self) -> None:
         """Register default command handlers."""
+
         async def handle_help(parsed: Dict[str, Any]) -> Dict[str, Any]:
             """Handle help command."""
             help_text = """
@@ -160,18 +150,20 @@ Available commands:
             self.conversations[phone_number] = {
                 "current_agent": agent_name,
                 "history": [],
-                "started_at": datetime.now().isoformat()
+                "started_at": datetime.now().isoformat(),
             }
 
         # Update current agent
         self.conversations[phone_number]["current_agent"] = agent_name
 
         # Add to history
-        self.conversations[phone_number]["history"].append({
-            "timestamp": datetime.now().isoformat(),
-            "message": parsed.get("raw_text", ""),
-            "type": "command" if parsed.get("command") else "text"
-        })
+        self.conversations[phone_number]["history"].append(
+            {
+                "timestamp": datetime.now().isoformat(),
+                "message": parsed.get("raw_text", ""),
+                "type": "command" if parsed.get("command") else "text",
+            }
+        )
 
     def _add_to_history(self, message: BaseWhatsAppMessage, direction: str) -> None:
         """Add message to history."""
@@ -181,17 +173,17 @@ Available commands:
             "direction": direction,
             "from": message.from_number,
             "to": message.to_number,
-            "type": getattr(message, 'message_type', 'unknown')
+            "type": getattr(message, "message_type", "unknown"),
         }
 
-        if hasattr(message, 'text'):
+        if hasattr(message, "text"):
             history_entry["text"] = message.text
 
         self.message_history.append(history_entry)
 
         # Enforce history limit
         if len(self.message_history) > self.config.message_history_limit:
-            self.message_history = self.message_history[-self.config.message_history_limit:]
+            self.message_history = self.message_history[-self.config.message_history_limit :]
 
     async def _send_error_response(self, message: BaseWhatsAppMessage, error_msg: str) -> None:
         """Send error response to user."""
