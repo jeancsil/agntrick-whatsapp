@@ -4,6 +4,9 @@ from datetime import datetime
 
 import pytest
 
+# Skip tests if agntrick.storage is not available (CI environment)
+agntrick_storage = pytest.importorskip("agntrick.storage")
+
 from agntrick_whatsapp.storage.database import db_manager
 from agntrick_whatsapp.storage.models import Task
 from agntrick_whatsapp.storage.repositories.task_repository import TaskRepository
