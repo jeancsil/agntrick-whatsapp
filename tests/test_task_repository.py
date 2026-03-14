@@ -1,11 +1,11 @@
 """Test cases for task repository operations."""
 
+# Skip tests if agntrick.storage is not available (CI environment)
+agntrick_storage = pytest.importorskip("agntrick.storage")
+
 from datetime import datetime
 
 import pytest
-
-# Skip tests if agntrick.storage is not available (CI environment)
-agntrick_storage = pytest.importorskip("agntrick.storage")
 
 from agntrick_whatsapp.storage.database import db_manager
 from agntrick_whatsapp.storage.models import Task
