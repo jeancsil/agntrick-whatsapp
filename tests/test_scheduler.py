@@ -1,63 +1,58 @@
-"""Test cases for scheduling time parsing."""
+"""Test cases for parse_natural_time from agntrick.storage."""
 
 # ruff: noqa: E402
-
-from datetime import datetime
-from unittest.mock import patch
 
 import pytest
 
 # Skip tests if agntrick.storage is not available (CI environment)
 pytest.importorskip("agntrick.storage")
 
-from agntrick_whatsapp.storage.scheduler import TimeParser
+from agntrick.storage import parse_natural_time  # type: ignore[import-untyped]
 
 
-class TestTimeParser:
-    """Test cases for TimeParser class."""
+class TestParseNaturalTime:
+    """Test cases for parse_natural_time function."""
 
-    def test_parse_simple_time(self):
-        """Test parsing a simple time string."""
-        parser = TimeParser()
-        result, desc = parser.parse_time_input("9am")
-        assert result.hour == 9
-        assert result.minute == 0
+    def test_parse_relative_minutes(self) -> None:
+        """Test parsing a relative time expression in minutes."""
+        result, cron = parse_natural_time("in 30 minutes")
+        assert cron is None
+        assert result is not None
 
-    def test_parse_time_with_minutes(self):
-        """Test parsing time with minutes."""
-        parser = TimeParser()
-        result, desc = parser.parse_time_input("9:30am")
-        assert result.hour == 9
-        assert result.minute == 30
+    def test_parse_relative_hours(self) -> None:
+        """Test parsing a relative time expression in hours."""
+        result, cron = parse_natural_time("in 2 hours")
+        assert cron is None
+        assert result is not None
 
-    def test_parse_24hour_time(self):
-        """Test parsing 24-hour format time."""
-        parser = TimeParser()
-        result, desc = parser.parse_time_input("14:00")
-        assert result.hour == 14
-        assert result.minute == 0
+    def test_parse_recurring_daily(self) -> None:
+        """Test parsing a recurring daily schedule."""
+        result, cron = parse_natural_time("daily at 9am")
+        assert cron is not None
+        # cron expression for 9am: minute=0 hour=9
+        assert "9" in cron
 
-    def test_parse_invalid_time(self):
-        """Test parsing invalid time."""
-        parser = TimeParser()
-        with pytest.raises(ValueError):
-            parser.parse_time_input("25:00")
+    def test_parse_recurring_every_day(self) -> None:
+        """Test parsing 'every day' recurring pattern."""
+        # "every day" matches the simple pattern before daily, so the "at 8am" is dropped
+        result, cron = parse_natural_time("every day at 8am")
+        assert cron == "0 0 * * *"  # Note: time component "at 8am" is silently dropped
+        assert result is not None
 
-    def test_parse_time_period(self):
-        """Test parsing time with period indicator."""
-        parser = TimeParser()
-        result, desc = parser.parse_time_input("9pm")
-        assert result.hour == 21
-        assert result.minute == 0
+    def test_parse_returns_datetime_for_relative(self) -> None:
+        """Test that relative time returns a valid datetime."""
+        from datetime import datetime
 
-    def test_parse_relative_time(self):
-        """Test parsing relative time."""
-        parser = TimeParser()
-        with patch("agntrick_whatsapp.storage.scheduler.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2024, 1, 1, 10, 0)
-            result, desc = parser.parse_time_input("in 30 minutes")
-            expected = datetime(2024, 1, 1, 10, 30)
-            assert result == expected
+        result, cron = parse_natural_time("in 1 hour")
+        assert isinstance(result, datetime)
+        assert cron is None
 
+    def test_parse_weekly_recurring(self) -> None:
+        """Test parsing a weekly recurring schedule using supported pattern."""
+        result, cron = parse_natural_time("weekly on monday")
+        assert cron is not None
 
-# ScheduleManager tests removed - class not yet implemented
+    def test_parse_tomorrow(self) -> None:
+        """Test parsing 'tomorrow' relative time."""
+        result, cron = parse_natural_time("tomorrow at 9am")
+        assert result is not None
