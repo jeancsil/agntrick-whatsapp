@@ -7,11 +7,14 @@ This version supports both:
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from .base import BaseWhatsAppMessage
 from .channel import WhatsAppChannel
 from .commands import CommandParser
+
+if TYPE_CHECKING:
+    from .config import WhatsAppRouterConfig
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +45,9 @@ class WhatsAppRouterAgent:
         temperature: The temperature for LLM responses (default: 0.7).
         mcp_servers_override: Optional override for MCP servers.
         audio_transcriber_config: Optional audio transcription config.
+        agent: Optional pre-built agent instance to use for LLM responses.
+        db: Optional Database instance for storage operations. If None, the
+            default database is used lazily on first storage access.
     """
 
     def __init__(
@@ -52,6 +58,7 @@ class WhatsAppRouterAgent:
         mcp_servers_override: list[str] | None = None,
         audio_transcriber_config: Any = None,
         agent: Any = None,
+        db: Any = None,
     ) -> None:
         self.channel = channel
         self._model_name = model_name
@@ -62,6 +69,10 @@ class WhatsAppRouterAgent:
         self._mcp_servers_override = mcp_servers_override
         self._audio_transcriber_config = audio_transcriber_config
         self._agent = agent
+        self._config: "WhatsAppRouterConfig | None" = None
+        self._db = db
+        self._note_repo: Any = None
+        self._task_repo: Any = None
 
         # Message history
         self.message_history: List[Dict[str, Any]] = []
@@ -71,6 +82,23 @@ class WhatsAppRouterAgent:
         self._command_parser = CommandParser()
 
         logger.info(f"WhatsAppRouterAgent initialized with channel type: {type(channel).__name__}")
+
+    @classmethod
+    def from_config(cls, channel: "WhatsAppChannel", config: "WhatsAppRouterConfig") -> "WhatsAppRouterAgent":
+        """Construct a WhatsAppRouterAgent from a WhatsAppRouterConfig.
+
+        Args:
+            channel: The WhatsAppChannel instance to use.
+            config: A WhatsAppRouterConfig instance.
+
+        Returns:
+            A configured WhatsAppRouterAgent instance.
+        """
+        instance = cls(channel=channel)
+        instance._config = config
+        if config.debug_mode:
+            logging.getLogger("agntrick_whatsapp").setLevel(logging.DEBUG)
+        return instance
 
     async def start(self) -> None:
         """Start WhatsApp router agent."""
@@ -163,9 +191,9 @@ class WhatsAppRouterAgent:
             logger.info(f"Parsed command: {command}")
 
             # Handle commands
-            if command.get("command"):
-                # Handle command
-                response = f"Command received but not fully wired yet: {command.get('command')}"
+            if command.command:
+                sender_id = self._get_sender_id(incoming)
+                response = await self._handle_command(command, sender_id)
                 await self._send_response(incoming, response)
                 return
 
@@ -210,3 +238,189 @@ class WhatsAppRouterAgent:
         # Send through the channel
         await self.channel.send_message(recipient_id, text)
         logger.info(f"Response sent to {recipient_id}")
+
+    # ------------------------------------------------------------------
+    # Storage helpers
+    # ------------------------------------------------------------------
+
+    def _get_repos(self) -> tuple[Any, Any]:
+        """Get or create note and task repositories.
+
+        Returns:
+            A tuple of (WhatsAppNoteRepository, TaskRepository).
+        """
+        if self._note_repo is None or self._task_repo is None:
+            from agntrick_whatsapp.storage import (
+                TaskRepository,
+                WhatsAppNoteRepository,
+                get_default_db,
+            )
+
+            db = self._db or get_default_db()
+            self._note_repo = WhatsAppNoteRepository(db)
+            self._task_repo = TaskRepository(db)
+        return self._note_repo, self._task_repo
+
+    def _get_sender_id(self, incoming: Any) -> str:
+        """Extract sender ID from an incoming message.
+
+        Args:
+            incoming: The incoming message object (dict or BaseWhatsAppMessage).
+
+        Returns:
+            The sender ID string, or "unknown" if it cannot be determined.
+        """
+        if isinstance(incoming, dict):
+            return str(incoming.get("sender_id", "unknown"))
+        if hasattr(incoming, "sender_id"):
+            return str(incoming.sender_id)
+        return "unknown"
+
+    # ------------------------------------------------------------------
+    # Command dispatch
+    # ------------------------------------------------------------------
+
+    async def _handle_command(self, command: Any, sender_id: str) -> str:
+        """Handle a parsed command and return a response string.
+
+        Args:
+            command: ParsedCommand with .command and .args attributes.
+            sender_id: The sender's ID for scoping storage operations.
+
+        Returns:
+            Response text to send back to the user.
+        """
+        cmd = command.command
+        args = command.args
+
+        if cmd == "note":
+            return await self._cmd_note(args, sender_id)
+        elif cmd == "notes":
+            return await self._cmd_notes(sender_id)
+        elif cmd == "remind":
+            return await self._cmd_remind(args, sender_id)
+        elif cmd == "schedule":
+            return await self._cmd_schedule(args, sender_id)
+        elif cmd == "help":
+            return self._cmd_help()
+        else:
+            return f"Unknown command: /{cmd}. Type /help for available commands."
+
+    async def _cmd_note(self, args: list[str], sender_id: str) -> str:
+        """Save a note for the sender.
+
+        Args:
+            args: Tokenised arguments; joined to form the note content.
+            sender_id: The sender's ID used as context for the note.
+
+        Returns:
+            Confirmation message or usage hint if no content was provided.
+        """
+        if not args:
+            return "Usage: /note <content>"
+        content = " ".join(args)
+        note_repo, _ = self._get_repos()
+        from agntrick_whatsapp.storage import Note
+
+        note = Note(content=content, context_id=sender_id)
+        note_repo.save(note)
+        return f"Note saved: {content}"
+
+    async def _cmd_notes(self, sender_id: str) -> str:
+        """List all notes saved by the sender.
+
+        Args:
+            sender_id: The sender's ID used to filter notes.
+
+        Returns:
+            Numbered list of notes or a message indicating no notes exist.
+        """
+        note_repo, _ = self._get_repos()
+        notes = note_repo.list_by_context(sender_id)
+        if not notes:
+            return "No notes found."
+        lines = [f"{i + 1}. {note.content}" for i, note in enumerate(notes)]
+        return "Your notes:\n" + "\n".join(lines)
+
+    async def _cmd_remind(self, args: list[str], sender_id: str) -> str:
+        """Set a one-off or recurring reminder.
+
+        Args:
+            args: Tokenised arguments where the first token is the time
+                expression and the rest form the reminder message.
+            sender_id: The sender's ID used as context for the task.
+
+        Returns:
+            Confirmation message with parsed datetime, or an error string
+            if the time expression cannot be parsed.
+        """
+        if len(args) < 2:
+            return "Usage: /remind <time> <message>\nExample: /remind 'in 30 minutes' call doctor"
+        time_str = args[0]
+        message = " ".join(args[1:])
+        try:
+            from agntrick_whatsapp.storage import ScheduledTask, TaskType, parse_natural_time
+
+            parsed_dt, cron_expr = parse_natural_time(time_str)
+            task = ScheduledTask(
+                action_type=TaskType.SEND_MESSAGE,
+                action_prompt=message,
+                context_id=sender_id,
+                execute_at=parsed_dt.timestamp(),
+                cron_expression=cron_expr,
+            )
+            _, task_repo = self._get_repos()
+            task_repo.save(task)
+            return f"Reminder set for {parsed_dt.strftime('%Y-%m-%d %H:%M')}: {message}"
+        except ValueError as e:
+            return f"Could not parse time '{time_str}': {e}"
+
+    async def _cmd_schedule(self, args: list[str], sender_id: str) -> str:
+        """Schedule a recurring message using a cron expression.
+
+        Args:
+            args: Tokenised arguments where the first token is the cron
+                expression and the rest form the recurring message.
+            sender_id: The sender's ID used as context for the task.
+
+        Returns:
+            Confirmation message, or an error string if the cron expression
+            is invalid.
+        """
+        if len(args) < 2:
+            return "Usage: /schedule <cron_expression> <message>\nExample: /schedule '0 9 * * *' Good morning!"
+        cron_expr = args[0]
+        message = " ".join(args[1:])
+        try:
+            from agntrick_whatsapp.storage import ScheduledTask, TaskType, calculate_next_run
+
+            next_run = calculate_next_run(cron_expr)
+            task = ScheduledTask(
+                action_type=TaskType.SEND_MESSAGE,
+                action_prompt=message,
+                context_id=sender_id,
+                execute_at=next_run.timestamp(),
+                cron_expression=cron_expr,
+            )
+            _, task_repo = self._get_repos()
+            task_repo.save(task)
+            return f"Scheduled: '{message}' (cron: {cron_expr})"
+        except ValueError as e:
+            return f"Invalid cron expression '{cron_expr}': {e}"
+
+    def _cmd_help(self) -> str:
+        """Return the help text listing all available commands.
+
+        Returns:
+            A multi-line help string.
+        """
+        return (
+            "Available commands:\n"
+            "/note <content> - Save a note\n"
+            "/notes - List your notes\n"
+            "/remind <time> <message> - Set a reminder "
+            "(e.g., /remind 'in 30 minutes' call doctor)\n"
+            "/schedule <cron> <message> - Schedule recurring message "
+            "(e.g., /schedule '0 9 * * *' Good morning)\n"
+            "/help - Show this help"
+        )
