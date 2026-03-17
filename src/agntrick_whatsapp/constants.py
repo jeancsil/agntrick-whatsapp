@@ -2,11 +2,10 @@
 
 from pathlib import Path
 
-# Project root directory
-BASE_DIR = Path(__file__).resolve().parent.parent
+import platformdirs
 
-# Data directory for persistent data
-DATA_DIR = BASE_DIR / "data"
+# Data directory for persistent data (follows OS conventions)
+DATA_DIR = Path(platformdirs.user_data_dir("agntrick-whatsapp"))
 
 # Logs directory
-LOGS_DIR = BASE_DIR / "logs"
+LOGS_DIR = Path(platformdirs.user_log_dir("agntrick-whatsapp"))
