@@ -87,6 +87,11 @@ class WhatsAppChannel:
         ConfigurationError: If storage_path is invalid or not writable.
     """
 
+    # Class-level lock for CWD changes (os.chdir is a process-global resource).
+    # Serializes CWD mutations across all WhatsAppChannel instances so that
+    # concurrent initialize() calls do not stomp each other's working directory.
+    _cwd_lock: threading.Lock = threading.Lock()
+
     def __init__(
         self,
         storage_path: str | Path,
@@ -234,10 +239,10 @@ class WhatsAppChannel:
     async def initialize(self) -> None:
         """Initialize neonize client.
 
-        This method creates a neonize client and permanently changes to
-        storage directory so that neonize persists session data in correct
-        location for duration of connection (including background thread that
-        calls connect()). The original directory is restored in shutdown().
+        Creates the neonize client and registers event handlers. The working
+        directory change required by neonize happens inside the background
+        thread (_run_client) to avoid blocking the main thread and to
+        serialize concurrent channel instances via the class-level _cwd_lock.
 
         Raises:
             ChannelError: If neonize fails to initialize.
@@ -247,19 +252,8 @@ class WhatsAppChannel:
         # Initialize deduplication database for persistent duplicate prevention
         self._init_deduplication_db()
 
-        cwd_changed = False
         try:
-            # Permanently change to storage directory so neonize stores session data in correct location
-            # there. We cannot use os.chdir context manager here
-            # because background thread runs connect() *after* this method
-            # returns, so we need to keep CWD changed until shutdown()
-            # there. We cannot use _change_directory context manager here
-            # because background thread runs connect() *after* this method
-            os.chdir(self.storage_path)
-            cwd_changed = True
-            logger.debug(f"Changed working directory to: {self.storage_path}")
-
-            # Create neonize sync client (will store session in current directory)
+            # Create neonize sync client — CWD change happens inside _run_client() thread
             self._client = NewClient("agntrick-whatsapp")
             logger.info("Neonize client created")
 
@@ -273,8 +267,6 @@ class WhatsAppChannel:
                     channel_name="whatsapp",
                 )
         except Exception as e:
-            if cwd_changed:
-                self._restore_working_directory()
             self._client = None
             raise ChannelError(
                 f"Failed to initialize neonize client: {e}",
@@ -383,12 +375,24 @@ class WhatsAppChannel:
                 else:
                     logger.warning("No existing session file found - QR code scan will be required")
 
-                # Connect to WhatsApp (may require QR code scan on first run)
-                logger.info("Connecting to WhatsApp (scan QR code if prompted)...")
-                self._client.connect()
-                logger.info("WhatsApp client connected")
+                # Serialize CWD changes across all channel instances.
+                # neonize uses the process CWD during connect() to locate its
+                # session database, so we must hold the lock for the duration of
+                # that call and then restore before releasing.
+                with WhatsAppChannel._cwd_lock:
+                    os.chdir(self.storage_path)
+                    logger.debug(f"Changed working directory to: {self.storage_path}")
+                    try:
+                        # Connect to WhatsApp (may require QR code scan on first run)
+                        logger.info("Connecting to WhatsApp (scan QR code if prompted)...")
+                        self._client.connect()
+                        logger.info("WhatsApp client connected")
+                    finally:
+                        # Restore CWD before releasing lock so other threads
+                        # see a clean state when they acquire it.
+                        self._restore_working_directory()
 
-                # Wait for stop signal
+                # Wait for stop signal (outside lock — neonize only needs CWD during connect)
                 logger.info("Waiting for messages...")
                 while not self._stop_event.is_set():
                     # Small sleep to avoid busy-waiting
@@ -414,9 +418,6 @@ class WhatsAppChannel:
                         "  2. WhatsApp server unavailable\n"
                         "  3. Session was invalidated mid-connection\n"
                     )
-            # Restore original working directory
-            if not self._stop_event.is_set():
-                self._restore_working_directory()
 
         self._thread = threading.Thread(target=_run_client, daemon=True)
         self._thread.start()
@@ -460,7 +461,7 @@ class WhatsAppChannel:
                 phone = self._normalize_phone_number(recipient_id)
                 jid = build_jid(phone)
 
-            if message.media_url:
+            if hasattr(message, "media_url") and message.media_url:
                 # Send media message
                 await self._send_media(jid, message.media_url, message.text, message.media_type)
             else:
@@ -471,6 +472,37 @@ class WhatsAppChannel:
             logger.info("Message sent")
             return jid  # type: ignore[no-any-return]
 
+        except Exception as e:
+            raise ChannelError(
+                f"Failed to send message: {e}",
+                channel_name="whatsapp",
+            ) from e
+
+    async def send_message(self, recipient_id: str, text: str) -> None:
+        """Send a text message to a recipient.
+
+        Convenience method that satisfies the WhatsAppChannelBase ABC and is
+        called by the router when sending plain-text responses.
+
+        Args:
+            recipient_id: The WhatsApp JID or phone number to send to.
+            text: The text message to send.
+
+        Raises:
+            ChannelError: If the channel is not initialized or sending fails.
+        """
+        if self._client is None:
+            raise ChannelError(
+                "Channel not initialized. Call initialize() first.",
+                channel_name="whatsapp",
+            )
+
+        try:
+            phone = self._normalize_phone_number(recipient_id)
+            jid = build_jid(phone)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._client.send_message, jid, text)
+            logger.info(f"Message sent to {recipient_id}")
         except Exception as e:
             raise ChannelError(
                 f"Failed to send message: {e}",
@@ -550,9 +582,6 @@ class WhatsAppChannel:
                 logger.error(f"Error during disconnect: {e}")
             finally:
                 self._client = None
-
-        # Restore original working directory
-        self._restore_working_directory()
 
         # Wait for thread to finish, and warn if it outlives timeout
         if self._thread and self._thread.is_alive():
