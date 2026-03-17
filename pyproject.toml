@@ -78,5 +78,3 @@ dev = [
     "ruff>=0.15.6",
 ]
 
-[tool.uv.sources]
-agntrick = { path = "../agntrick", editable = true }
