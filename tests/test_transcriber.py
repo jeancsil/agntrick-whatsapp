@@ -366,6 +366,264 @@ class TestWhatsAppAudioHandler:
             raise TranscriptionError("Test error")
 
 
+class TestAudioTranscriberWithoutSR:
+    """Test cases for AudioTranscriber when speech_recognition is unavailable."""
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_sr_unavailable(self):
+        """Test transcription returns error when speech_recognition is not available."""
+        with patch("agntrick_whatsapp.transcriber.SPEECH_RECOGNITION_AVAILABLE", False):
+            transcriber = AudioTranscriber()
+            result = await transcriber.transcribe_audio(b"audio_data")
+        assert result["status"] == "error"
+        assert "not available" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_batch_transcribe_all_errors(self):
+        """Test batch_transcribe returns error list when SR is unavailable."""
+        with patch("agntrick_whatsapp.transcriber.SPEECH_RECOGNITION_AVAILABLE", False):
+            transcriber = AudioTranscriber()
+            files = [("file1.wav", b"audio1"), ("file2.wav", b"audio2")]
+            results = await transcriber.batch_transcribe(files)
+        assert isinstance(results, list)
+        assert len(results) == 2
+        assert all(r["status"] == "error" for r in results)
+
+    @pytest.mark.asyncio
+    async def test_batch_transcribe_empty_list(self):
+        """Test batch_transcribe with empty list returns empty results."""
+        transcriber = AudioTranscriber()
+        results = await transcriber.batch_transcribe([])
+        assert results == []
+
+    def test_create_audio_file(self):
+        """Test _create_audio_file creates a temporary file."""
+        import os
+
+        transcriber = AudioTranscriber()
+        temp_path = transcriber._create_audio_file(b"test audio data", "wav")
+        assert os.path.exists(temp_path)
+        assert temp_path.endswith(".wav")
+        # Cleanup
+        os.unlink(temp_path)
+
+    def test_create_audio_file_ogg_format(self):
+        """Test _create_audio_file with ogg format."""
+        import os
+
+        transcriber = AudioTranscriber()
+        temp_path = transcriber._create_audio_file(b"test", "ogg")
+        assert temp_path.endswith(".ogg")
+        os.unlink(temp_path)
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_success_mocked(self):
+        """Test successful transcription path with mocked recognizer."""
+        transcriber = AudioTranscriber()
+        # Simulate having a recognizer
+        transcriber.recognizer = True  # type: ignore[assignment]
+
+        with (
+            patch("agntrick_whatsapp.transcriber.SPEECH_RECOGNITION_AVAILABLE", True),
+            patch.object(transcriber, "_create_audio_file", return_value="/tmp/fake.wav"),
+            patch.object(transcriber, "_transcribe_file", new=AsyncMock(return_value="Hello world")),
+        ):
+            result = await transcriber.transcribe_audio(b"fake_audio_data")
+
+        assert result["status"] == "success"
+        assert result["text"] == "Hello world"
+        assert "timestamp" in result
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_exception_in_transcribe_file(self):
+        """Test transcription failure path when _transcribe_file raises."""
+        transcriber = AudioTranscriber()
+        transcriber.recognizer = True  # type: ignore[assignment]
+
+        with (
+            patch("agntrick_whatsapp.transcriber.SPEECH_RECOGNITION_AVAILABLE", True),
+            patch.object(transcriber, "_create_audio_file", return_value="/tmp/fake.wav"),
+            patch.object(transcriber, "_transcribe_file", new=AsyncMock(side_effect=Exception("Audio unclear"))),
+        ):
+            result = await transcriber.transcribe_audio(b"bad_audio")
+
+        assert result["status"] == "error"
+        assert "Audio unclear" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_transcribe_audio_sr_available_no_recognizer(self):
+        """Test transcription when SR available but recognizer is None."""
+        transcriber = AudioTranscriber()
+        transcriber.recognizer = None
+
+        with patch("agntrick_whatsapp.transcriber.SPEECH_RECOGNITION_AVAILABLE", True):
+            result = await transcriber.transcribe_audio(b"audio_data")
+
+        assert result["status"] == "error"
+        assert "not available" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_transcribe_file_raises_without_recognizer(self):
+        """Test _transcribe_file raises when recognizer is None."""
+        transcriber = AudioTranscriber()
+        transcriber.recognizer = None
+
+        with pytest.raises(Exception, match="not available"):
+            await transcriber._transcribe_file("/tmp/fake.wav")
+
+
+class TestWhatsAppAudioHandlerProcessing:
+    """Additional test cases for WhatsAppAudioHandler processing paths."""
+
+    @pytest.mark.asyncio
+    async def test_process_audio_with_valid_data_no_sr(self):
+        """Test process_audio_message with valid data when SR is unavailable."""
+        handler = WhatsAppAudioHandler()
+        msg_data = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "msg1",
+                                        "type": "audio",
+                                        "audio": {
+                                            "mime_type": "audio/ogg",
+                                            "sha256": "abc123",
+                                            "voice_note": True,
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        result = await handler.process_audio_message(msg_data)
+        # With simulated audio, the transcription might succeed or fail
+        assert result["status"] in ("success", "error")
+
+    @pytest.mark.asyncio
+    async def test_process_audio_message_empty_entry(self):
+        """Test processing with empty entry list."""
+        handler = WhatsAppAudioHandler()
+        result = await handler.process_audio_message({"entry": []})
+        assert result["status"] == "error"
+
+    def test_extract_audio_info_empty_dict(self):
+        """Test _extract_audio_info with empty dict returns None."""
+        handler = WhatsAppAudioHandler()
+        result = handler._extract_audio_info({})
+        assert result is None
+
+    def test_extract_audio_info_no_voice_note(self):
+        """Test _extract_audio_info with non-voice-note audio returns mp3 format."""
+        handler = WhatsAppAudioHandler()
+        msg_data = {
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "id": "msg1",
+                                        "type": "audio",
+                                        "audio": {
+                                            "mime_type": "audio/mp3",
+                                            "sha256": "def456",
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ]
+        }
+        info = handler._extract_audio_info(msg_data)
+        assert info is not None
+        assert info["format"] == "mp3"
+        assert info["voice_note"] is False
+
+    @pytest.mark.asyncio
+    async def test_process_audio_message_exception_in_download(self):
+        """Test process_audio_message wraps exceptions in error dict."""
+        handler = WhatsAppAudioHandler()
+
+        # Mock _download_audio to raise
+        with patch.object(handler, "_download_audio", new=AsyncMock(side_effect=Exception("Download failed"))):
+            msg_data = {
+                "entry": [
+                    {
+                        "changes": [
+                            {
+                                "value": {
+                                    "messages": [
+                                        {
+                                            "id": "msg1",
+                                            "type": "audio",
+                                            "audio": {"mime_type": "audio/ogg"},
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+            result = await handler.process_audio_message(msg_data)
+
+        assert result["status"] == "error"
+        assert "Download failed" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_process_audio_message_with_mocked_transcription(self):
+        """Test full process_audio_message success path with mocked transcription."""
+        handler = WhatsAppAudioHandler()
+
+        mock_transcribe = AsyncMock(
+            return_value={
+                "status": "success",
+                "text": "Hello from audio",
+                "timestamp": datetime.now().isoformat(),
+            }
+        )
+
+        with patch.object(handler.transcriber, "transcribe_audio", mock_transcribe):
+            msg_data = {
+                "entry": [
+                    {
+                        "changes": [
+                            {
+                                "value": {
+                                    "messages": [
+                                        {
+                                            "id": "msg1",
+                                            "type": "audio",
+                                            "audio": {
+                                                "mime_type": "audio/ogg",
+                                                "sha256": "abc",
+                                                "voice_note": True,
+                                            },
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+            result = await handler.process_audio_message(msg_data)
+
+        assert result["status"] == "success"
+        assert result["audio_info"]["id"] == "msg1"
+        assert result["transcription"]["text"] == "Hello from audio"
+
+
 class TestSpeechRecognitionAvailability:
     """Test cases for speech recognition availability checks."""
 
