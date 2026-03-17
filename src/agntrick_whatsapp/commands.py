@@ -56,13 +56,20 @@ class CommandParser:
             "system": re.compile(rf"^{self.prefix}system\s+(.+)", re.IGNORECASE),
         }
 
-    def parse(self, text: str) -> dict:
-        """Parse a text message into a command structure."""
+    def parse(self, text: str) -> ParsedCommand:
+        """Parse a text message into a command structure.
+
+        Args:
+            text: The raw message text to parse.
+
+        Returns:
+            A ParsedCommand instance representing the parsed command.
+        """
         text = text.strip()
         raw_text = text
 
         if not text:
-            return {"command": None, "args": [], "raw_text": raw_text}
+            return ParsedCommand(command_type=CommandType.TEXT, command=None, args=[], raw_text=raw_text)
 
         # Check for command patterns
         for command_type, pattern in self.command_patterns.items():
@@ -82,17 +89,26 @@ class CommandParser:
 
         # If no command prefix, treat as regular text
         if not text.startswith(self.prefix):
-            return {"command": None, "args": [], "raw_text": raw_text}
+            return ParsedCommand(command_type=CommandType.TEXT, command=None, args=[], raw_text=raw_text)
 
         # Generic command with prefix
         parts = text[len(self.prefix) :].strip().split(maxsplit=1)
         command = parts[0] if parts else None
         args = parts[1].split() if len(parts) > 1 else []
 
-        return {"command": command, "args": args, "raw_text": raw_text}
+        return ParsedCommand(command_type=CommandType.COMMAND, command=command, args=args, raw_text=raw_text)
 
-    def _parse_schedule_command(self, text: str, match: re.Match, args: List[str]) -> dict:
-        """Parse schedule command with special handling."""
+    def _parse_schedule_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
+        """Parse schedule command with special handling.
+
+        Args:
+            text: The raw message text.
+            match: The regex match object.
+            args: The parsed argument list.
+
+        Returns:
+            A ParsedCommand instance with SCHEDULE command type.
+        """
         # Look for recurring patterns like "every", "daily", "weekly"
         recurring_patterns = {
             "every": re.compile(r"every\s+(\d+)\s+(minutes?|hours?|days?|weeks?)", re.IGNORECASE),
@@ -103,7 +119,7 @@ class CommandParser:
             ),
         }
 
-        metadata = {}
+        metadata: Dict[str, Any] = {}
         schedule_text = match.group(1)
 
         # Check for recurring patterns
@@ -120,19 +136,52 @@ class CommandParser:
             if not any(re.search(pattern, part) for pattern in recurring_patterns.values()):
                 task_parts.append(part)
 
-        return {"command": "schedule", "args": task_parts, "raw_text": text}
+        return ParsedCommand(
+            command_type=CommandType.SCHEDULE,
+            command="schedule",
+            args=task_parts,
+            raw_text=text,
+            metadata=metadata,
+        )
 
-    def _parse_list_command(self, text: str, match: re.Match, args: List[str]) -> dict:
-        """Parse list command."""
-        return {"command": "list", "args": args, "raw_text": text}
+    def _parse_list_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
+        """Parse list command.
 
-    def _parse_help_command(self, text: str, match: re.Match, args: List[str]) -> dict:
-        """Parse help command."""
-        return {"command": "help", "args": args, "raw_text": text}
+        Args:
+            text: The raw message text.
+            match: The regex match object.
+            args: The parsed argument list.
 
-    def _parse_system_command(self, text: str, match: re.Match, args: List[str]) -> dict:
-        """Parse system command."""
-        return {"command": "system", "args": args, "raw_text": text}
+        Returns:
+            A ParsedCommand instance with COMMAND command type.
+        """
+        return ParsedCommand(command_type=CommandType.COMMAND, command="list", args=args, raw_text=text)
+
+    def _parse_help_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
+        """Parse help command.
+
+        Args:
+            text: The raw message text.
+            match: The regex match object.
+            args: The parsed argument list.
+
+        Returns:
+            A ParsedCommand instance with COMMAND command type.
+        """
+        return ParsedCommand(command_type=CommandType.COMMAND, command="help", args=args, raw_text=text)
+
+    def _parse_system_command(self, text: str, match: re.Match, args: List[str]) -> ParsedCommand:
+        """Parse system command.
+
+        Args:
+            text: The raw message text.
+            match: The regex match object.
+            args: The parsed argument list.
+
+        Returns:
+            A ParsedCommand instance with SYSTEM command type.
+        """
+        return ParsedCommand(command_type=CommandType.SYSTEM, command="system", args=args, raw_text=text)
 
 
 class CommandHandler:
@@ -147,9 +196,16 @@ class CommandHandler:
         self.commands[command_name] = handler
 
     async def handle(self, text: str) -> Dict[str, Any]:
-        """Handle a text message and execute appropriate command."""
+        """Handle a text message and execute appropriate command.
+
+        Args:
+            text: The raw message text to handle.
+
+        Returns:
+            A dictionary with the result of handling the message.
+        """
         parsed = self.parser.parse(text)
-        command = parsed.get("command")
+        command = parsed.command
 
         if command is None:
             return await self._handle_text_message(parsed)
@@ -168,6 +224,13 @@ class CommandHandler:
 
         return {"status": "error", "message": f"Unknown command: {command}", "parsed": parsed}
 
-    async def _handle_text_message(self, parsed: Dict[str, Any]) -> Dict[str, Any]:
-        """Handle regular text messages."""
-        return {"status": "text", "message": parsed.get("raw_text", ""), "parsed": parsed}
+    async def _handle_text_message(self, parsed: ParsedCommand) -> Dict[str, Any]:
+        """Handle regular text messages.
+
+        Args:
+            parsed: The parsed command representing a plain text message.
+
+        Returns:
+            A dictionary with status 'text' and the message content.
+        """
+        return {"status": "text", "message": parsed.raw_text, "parsed": parsed}
