@@ -498,6 +498,75 @@ def test_collect_candidate_numbers(channel: "WhatsAppChannel") -> None:  # type:
     assert "118657162162293" in candidates
 
 
+def test_extract_server_whatsapp_net(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_server returns s.whatsapp.net for phone-based JIDs."""
+    assert channel._extract_server("34666666666@s.whatsapp.net") == "s.whatsapp.net"
+
+
+def test_extract_server_lid(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_server returns lid for LID-based JIDs."""
+    assert channel._extract_server("118657162162293@lid") == "lid"
+
+
+def test_extract_server_bare_number(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_server defaults to s.whatsapp.net for bare phone numbers."""
+    assert channel._extract_server("34666666666") == "s.whatsapp.net"
+
+
+@pytest.mark.asyncio
+async def test_send_message_preserves_lid_server(tmp_path: Path) -> None:
+    """send_message() must use the lid server when recipient is a LID JID."""
+    import agntrick_whatsapp.channel_bridge as bridge_mod
+    from agntrick_whatsapp.channel_bridge import WhatsAppChannel
+
+    mock_client = MagicMock()
+    mock_client.event.return_value = lambda fn: fn
+
+    with patch("agntrick_whatsapp.channel_bridge.NewClient", return_value=mock_client):
+        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
+        ch._client = mock_client
+
+    built_jids: list = []
+
+    def capture_build_jid(user: str, server: str = "s.whatsapp.net") -> MagicMock:
+        built_jids.append((user, server))
+        return MagicMock()
+
+    with patch.object(bridge_mod, "build_jid", create=True, side_effect=capture_build_jid):
+        loop = asyncio.get_event_loop()
+        with patch.object(loop, "run_in_executor", new_callable=AsyncMock):
+            await ch.send_message("118657162162293@lid", "Hello LID")
+
+    assert built_jids == [("118657162162293", "lid")]
+
+
+@pytest.mark.asyncio
+async def test_send_message_defaults_to_whatsapp_net(tmp_path: Path) -> None:
+    """send_message() uses s.whatsapp.net for bare phone numbers."""
+    import agntrick_whatsapp.channel_bridge as bridge_mod
+    from agntrick_whatsapp.channel_bridge import WhatsAppChannel
+
+    mock_client = MagicMock()
+    mock_client.event.return_value = lambda fn: fn
+
+    with patch("agntrick_whatsapp.channel_bridge.NewClient", return_value=mock_client):
+        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
+        ch._client = mock_client
+
+    built_jids: list = []
+
+    def capture_build_jid(user: str, server: str = "s.whatsapp.net") -> MagicMock:
+        built_jids.append((user, server))
+        return MagicMock()
+
+    with patch.object(bridge_mod, "build_jid", create=True, side_effect=capture_build_jid):
+        loop = asyncio.get_event_loop()
+        with patch.object(loop, "run_in_executor", new_callable=AsyncMock):
+            await ch.send_message("+34666666666", "Hello PN")
+
+    assert built_jids == [("34666666666", "s.whatsapp.net")]
+
+
 def test_on_message_event_skips_non_text(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
     """Non-text messages (images, etc.) are skipped."""
     channel._message_callback = AsyncMock()

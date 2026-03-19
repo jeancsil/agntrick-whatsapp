@@ -152,11 +152,28 @@ class WhatsAppChannel:
         # Remove + if present (whatsapp expects format without +)
         return cleaned.lstrip("+")
 
+    @staticmethod
+    def _extract_server(jid_str: str) -> str:
+        """Extract the server component from a JID string.
+
+        Args:
+            jid_str: A JID string like ``"34666666666@s.whatsapp.net"`` or
+                     ``"118657162162293@lid"``.
+
+        Returns:
+            The server portion (e.g. ``"s.whatsapp.net"``, ``"lid"``).
+            Defaults to ``"s.whatsapp.net"`` when no ``@`` is present.
+        """
+        if "@" in jid_str:
+            return jid_str.split("@", 1)[1]
+        return "s.whatsapp.net"
+
     def _send_typing(self, jid: str) -> None:
         """Send typing indicator to a JID.
 
         Args:
-            jid: The JID to send typing indicator to.
+            jid: The full JID string (e.g. ``"34666@s.whatsapp.net"``
+                 or ``"118657162162293@lid"``).
         """
         if not self.typing_indicators or self._client is None:
             logger.debug(
@@ -166,10 +183,9 @@ class WhatsAppChannel:
             return
 
         try:
-            # Normalize JID: strip domain if present so build_jid() creates correct JID object
-            normalized_jid = jid.split("@")[0] if "@" in jid else jid
-            jid_obj = build_jid(normalized_jid)
-            # Send composing presence to show typing indicator
+            user = self._normalize_phone_number(jid)
+            server = self._extract_server(jid)
+            jid_obj = build_jid(user, server=server)
             self._client.send_chat_presence(
                 jid_obj,
                 ChatPresence.CHAT_PRESENCE_COMPOSING,
@@ -203,10 +219,9 @@ class WhatsAppChannel:
                 await asyncio.sleep(wait_time)
 
         try:
-            # Normalize JID
-            normalized_jid = jid.split("@")[0] if "@" in jid else jid
-            jid_obj = build_jid(normalized_jid)
-            # Send paused presence to stop typing indicator
+            user = self._normalize_phone_number(jid)
+            server = self._extract_server(jid)
+            jid_obj = build_jid(user, server=server)
             self._client.send_chat_presence(
                 jid_obj,
                 ChatPresence.CHAT_PRESENCE_PAUSED,
@@ -630,13 +645,9 @@ class WhatsAppChannel:
             # Handle both string messages and OutgoingMessage objects
             recipient_id = message.recipient_id if hasattr(message, "recipient_id") else message
 
-            # For LID contacts (@lid), build JID with lid server
-            if "@" in recipient_id:
-                phone = self._normalize_phone_number(recipient_id)
-                jid = build_jid(phone, server="lid")
-            else:
-                phone = self._normalize_phone_number(recipient_id)
-                jid = build_jid(phone)
+            user = self._normalize_phone_number(recipient_id)
+            server = self._extract_server(recipient_id)
+            jid = build_jid(user, server=server)
 
             if hasattr(message, "media_url") and message.media_url:
                 # Send media message
@@ -662,7 +673,8 @@ class WhatsAppChannel:
         called by the router when sending plain-text responses.
 
         Args:
-            recipient_id: The WhatsApp JID or phone number to send to.
+            recipient_id: The WhatsApp JID (e.g. ``"34666@s.whatsapp.net"``
+                          or ``"118657@lid"``) or a bare phone number.
             text: The text message to send.
 
         Raises:
@@ -675,8 +687,9 @@ class WhatsAppChannel:
             )
 
         try:
-            phone = self._normalize_phone_number(recipient_id)
-            jid = build_jid(phone)
+            user = self._normalize_phone_number(recipient_id)
+            server = self._extract_server(recipient_id)
+            jid = build_jid(user, server=server)
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._client.send_message, jid, text)
             logger.info(f"Message sent to {recipient_id}")
