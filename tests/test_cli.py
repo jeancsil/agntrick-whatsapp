@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 from agntrick_whatsapp.cli import _config_template, _display_settings, _run_agent, app
 from agntrick_whatsapp.runner_config import WhatsAppRunnerSettings
 
-runner = CliRunner()
+runner = CliRunner(env={"COLUMNS": "120"})  # Set terminal width for consistent help output
 
 
 class TestCLIVersion:
