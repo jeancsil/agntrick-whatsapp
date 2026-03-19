@@ -413,9 +413,10 @@ def test_on_message_event_filters_contact(channel: "WhatsAppChannel") -> None:  
     channel._message_callback = callback
     channel._loop = MagicMock()
 
-    # Sender is NOT the allowed contact
+    # Neither Sender nor Chat matches the allowed contact
     sender = MagicMock(User="11111111111", Server="s.whatsapp.net")
-    source = MagicMock(IsFromMe=False, Sender=sender, Chat=sender)
+    chat = MagicMock(User="11111111111", Server="s.whatsapp.net")
+    source = MagicMock(IsFromMe=False, Sender=sender, Chat=chat, spec=["IsFromMe", "Sender", "Chat"])
     info = MagicMock(MessageSource=source, Timestamp=0, Pushname="Other")
     msg = MagicMock()
     msg.HasField.side_effect = lambda f: f == "conversation"
@@ -452,6 +453,49 @@ def test_on_message_event_dispatches_allowed_contact(channel: "WhatsAppChannel")
         assert mock_schedule.call_args[0][1] is loop
 
     loop.close()
+
+
+def test_on_message_event_allows_lid_sender_when_chat_matches(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """A LID sender should be allowed when the Chat JID matches allowed_contact.
+
+    WhatsApp may identify senders via a Linked ID (e.g. 118657162162293@lid)
+    instead of a phone JID.  The Chat JID still contains the phone number.
+    """
+    callback = AsyncMock()
+    channel._message_callback = callback
+    loop = asyncio.new_event_loop()
+    channel._loop = loop
+
+    # Sender is a LID — does NOT match allowed_contact directly
+    sender = MagicMock(User="118657162162293", Server="lid")
+    # Chat contains the real phone number which matches allowed_contact
+    chat = MagicMock(User="34666666666", Server="s.whatsapp.net")
+    source = MagicMock(Sender=sender, Chat=chat, spec=["Sender", "Chat"])
+    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Jean")
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "conversation"
+    msg.conversation = "/ollama hello"
+    event = MagicMock(Info=info, Message=msg)
+
+    with patch("agntrick_whatsapp.channel_bridge.asyncio.run_coroutine_threadsafe") as mock_schedule:
+        channel._on_message_event(MagicMock(), event)
+        mock_schedule.assert_called_once()
+
+    loop.close()
+
+
+def test_collect_candidate_numbers(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_collect_candidate_numbers gathers numbers from Sender, SenderAlt, Chat."""
+    sender = MagicMock(User="118657162162293", Server="lid")
+    sender_alt = MagicMock(User="34666666666", Server="s.whatsapp.net")
+    chat = MagicMock(User="34666666666", Server="s.whatsapp.net")
+    source = MagicMock(Sender=sender, SenderAlt=sender_alt, Chat=chat)
+    info = MagicMock(MessageSource=source)
+    event = MagicMock(Info=info)
+
+    candidates = channel._collect_candidate_numbers(event)
+    assert "34666666666" in candidates
+    assert "118657162162293" in candidates
 
 
 def test_on_message_event_skips_non_text(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
