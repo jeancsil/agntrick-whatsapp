@@ -440,15 +440,35 @@ class WhatsAppChannel:
         logger.info("Incoming message from %s (%s): %s", push_name or sender_number, sender_jid, text[:80])
 
         # Contact filter.
-        # In LID addressing mode the Sender JID is a synthetic Linked ID
-        # that cannot be matched to a phone number.  ``IsFromMe`` is the
-        # authoritative protocol-level signal that the message was sent by
-        # the account owner, so we use it to bypass the phone-number check.
+        # Only process messages that originate from the self-chat (the
+        # account owner talking to themselves).  ``IsFromMe`` alone is
+        # not enough — it is True for *every* outgoing message, including
+        # those sent to groups and other people.  We additionally require
+        # that Chat.User == Sender.User (self-chat) and IsGroup is False.
         if self.allowed_contact:
             source = getattr(info, "MessageSource", None) if info else None
             is_from_me = getattr(source, "IsFromMe", False) if source else False
+            is_group = getattr(source, "IsGroup", False) if source else False
 
-            if not is_from_me:
+            if is_from_me and not is_group:
+                chat_jid = getattr(source, "Chat", None)
+                sender_obj = getattr(source, "Sender", None)
+                chat_user = getattr(chat_jid, "User", "") if chat_jid else ""
+                sender_user = getattr(sender_obj, "User", "") if sender_obj else ""
+
+                if chat_user and sender_user and chat_user == sender_user:
+                    logger.debug("Allowing self-chat message (Chat==Sender, IsFromMe=True)")
+                else:
+                    logger.debug(
+                        "Ignoring outgoing DM (Chat.User=%s != Sender.User=%s)",
+                        chat_user,
+                        sender_user,
+                    )
+                    return
+            elif is_group:
+                logger.debug("Ignoring group message (IsGroup=True)")
+                return
+            else:
                 candidates = self._collect_candidate_numbers(event)
                 if self.allowed_contact not in candidates:
                     logger.info(
@@ -458,8 +478,6 @@ class WhatsAppChannel:
                         self.allowed_contact,
                     )
                     return
-            else:
-                logger.debug("Allowing message from account owner (IsFromMe=True)")
 
         # Send typing indicator (sync, runs on this thread)
         self._send_typing(sender_jid)
