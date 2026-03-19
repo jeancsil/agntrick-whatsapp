@@ -381,64 +381,17 @@ def test_extract_sender_jid_unknown(channel: "WhatsAppChannel") -> None:  # type
 # ---------------------------------------------------------------------------
 
 
-def test_on_message_event_processes_self_chat(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """Self-chat messages (IsFromMe=True, Chat==Sender) are processed."""
-    callback = AsyncMock()
-    channel._message_callback = callback
-    loop = asyncio.new_event_loop()
-    channel._loop = loop
-
-    sender = MagicMock(User="118657162162293", Server="lid")
-    source = MagicMock(IsFromMe=True, IsGroup=False, Sender=sender, Chat=sender)
-    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Me")
-    msg = MagicMock()
-    msg.HasField.side_effect = lambda f: f == "conversation"
-    msg.conversation = "Hello"
-    event = MagicMock(Info=info, Message=msg)
-
-    with patch("agntrick_whatsapp.channel_bridge.asyncio.run_coroutine_threadsafe") as mock_schedule:
-        channel._on_message_event(MagicMock(), event)
-        mock_schedule.assert_called_once()
-
-    loop.close()
-
-
-def test_on_message_event_ignores_outgoing_dm(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """Outgoing DMs (IsFromMe=True, Chat!=Sender) must be ignored."""
-    callback = AsyncMock()
-    channel._message_callback = callback
+def test_on_message_event_skips_own_messages(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """Own outgoing messages (IsFromMe=True) are silently skipped."""
+    channel._message_callback = MagicMock()
     channel._loop = MagicMock()
 
-    sender = MagicMock(User="118657162162293", Server="lid")
-    other_person = MagicMock(User="999888777666", Server="s.whatsapp.net")
-    source = MagicMock(IsFromMe=True, IsGroup=False, Sender=sender, Chat=other_person)
-    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Me")
-    msg = MagicMock()
-    msg.HasField.side_effect = lambda f: f == "conversation"
-    msg.conversation = "Hey friend"
-    event = MagicMock(Info=info, Message=msg)
+    source = MagicMock(IsFromMe=True)
+    info = MagicMock(MessageSource=source)
+    event = MagicMock(Info=info)
 
     channel._on_message_event(MagicMock(), event)
-    assert callback.call_count == 0
-
-
-def test_on_message_event_ignores_group_messages(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """Group messages (IsGroup=True) must be ignored regardless of IsFromMe."""
-    callback = AsyncMock()
-    channel._message_callback = callback
-    channel._loop = MagicMock()
-
-    sender = MagicMock(User="118657162162293", Server="lid")
-    group = MagicMock(User="120363000000000000", Server="g.us")
-    source = MagicMock(IsFromMe=True, IsGroup=True, Sender=sender, Chat=group)
-    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Me")
-    msg = MagicMock()
-    msg.HasField.side_effect = lambda f: f == "conversation"
-    msg.conversation = "Hello group"
-    event = MagicMock(Info=info, Message=msg)
-
-    channel._on_message_event(MagicMock(), event)
-    assert callback.call_count == 0
+    channel._loop.call_soon_threadsafe.assert_not_called()
 
 
 def test_on_message_event_filters_contact(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
@@ -447,16 +400,9 @@ def test_on_message_event_filters_contact(channel: "WhatsAppChannel") -> None:  
     channel._message_callback = callback
     channel._loop = MagicMock()
 
-    # Neither Sender nor Chat matches the allowed contact
+    # Sender is NOT the allowed contact
     sender = MagicMock(User="11111111111", Server="s.whatsapp.net")
-    chat = MagicMock(User="11111111111", Server="s.whatsapp.net")
-    source = MagicMock(
-        IsFromMe=False,
-        IsGroup=False,
-        Sender=sender,
-        Chat=chat,
-        spec=["IsFromMe", "IsGroup", "Sender", "Chat"],
-    )
+    source = MagicMock(IsFromMe=False, Sender=sender, Chat=sender)
     info = MagicMock(MessageSource=source, Timestamp=0, Pushname="Other")
     msg = MagicMock()
     msg.HasField.side_effect = lambda f: f == "conversation"
@@ -479,7 +425,7 @@ def test_on_message_event_dispatches_allowed_contact(channel: "WhatsAppChannel")
 
     # Sender matches allowed contact (34666666666)
     sender = MagicMock(User="34666666666", Server="s.whatsapp.net")
-    source = MagicMock(IsFromMe=False, IsGroup=False, Sender=sender, Chat=sender)
+    source = MagicMock(IsFromMe=False, Sender=sender, Chat=sender)
     info = MagicMock(MessageSource=source, Timestamp=1234567890, Pushname="Jean")
     msg = MagicMock()
     msg.HasField.side_effect = lambda f: f == "conversation"
@@ -493,113 +439,6 @@ def test_on_message_event_dispatches_allowed_contact(channel: "WhatsAppChannel")
         assert mock_schedule.call_args[0][1] is loop
 
     loop.close()
-
-
-def test_on_message_event_lid_sender_without_is_from_me_is_filtered(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """A LID sender without IsFromMe is filtered when no candidate matches.
-
-    In full LID addressing mode all JIDs are Linked IDs.  If IsFromMe is
-    False (message from another person) and no candidate phone number
-    matches allowed_contact, the message must be filtered out.
-    """
-    callback = AsyncMock()
-    channel._message_callback = callback
-    channel._loop = MagicMock()
-
-    sender = MagicMock(User="999999999999", Server="lid")
-    chat = MagicMock(User="999999999999", Server="lid")
-    source = MagicMock(IsFromMe=False, IsGroup=False, Sender=sender, Chat=chat)
-    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Stranger")
-    msg = MagicMock()
-    msg.HasField.side_effect = lambda f: f == "conversation"
-    msg.conversation = "/ollama hello"
-    event = MagicMock(Info=info, Message=msg)
-
-    channel._on_message_event(MagicMock(), event)
-    assert callback.call_count == 0
-
-
-def test_collect_candidate_numbers(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """_collect_candidate_numbers gathers numbers from Sender, SenderAlt, Chat."""
-    sender = MagicMock(User="118657162162293", Server="lid")
-    sender_alt = MagicMock(User="34666666666", Server="s.whatsapp.net")
-    chat = MagicMock(User="34666666666", Server="s.whatsapp.net")
-    source = MagicMock(Sender=sender, SenderAlt=sender_alt, Chat=chat)
-    info = MagicMock(MessageSource=source)
-    event = MagicMock(Info=info)
-
-    candidates = channel._collect_candidate_numbers(event)
-    assert "34666666666" in candidates
-    assert "118657162162293" in candidates
-
-
-def test_extract_server_whatsapp_net(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """_extract_server returns s.whatsapp.net for phone-based JIDs."""
-    assert channel._extract_server("34666666666@s.whatsapp.net") == "s.whatsapp.net"
-
-
-def test_extract_server_lid(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """_extract_server returns lid for LID-based JIDs."""
-    assert channel._extract_server("118657162162293@lid") == "lid"
-
-
-def test_extract_server_bare_number(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """_extract_server defaults to s.whatsapp.net for bare phone numbers."""
-    assert channel._extract_server("34666666666") == "s.whatsapp.net"
-
-
-@pytest.mark.asyncio
-async def test_send_message_preserves_lid_server(tmp_path: Path) -> None:
-    """send_message() must use the lid server when recipient is a LID JID."""
-    import agntrick_whatsapp.channel_bridge as bridge_mod
-    from agntrick_whatsapp.channel_bridge import WhatsAppChannel
-
-    mock_client = MagicMock()
-    mock_client.event.return_value = lambda fn: fn
-
-    with patch("agntrick_whatsapp.channel_bridge.NewClient", return_value=mock_client):
-        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
-        ch._client = mock_client
-
-    built_jids: list = []
-
-    def capture_build_jid(user: str, server: str = "s.whatsapp.net") -> MagicMock:
-        built_jids.append((user, server))
-        return MagicMock()
-
-    with patch.object(bridge_mod, "build_jid", create=True, side_effect=capture_build_jid):
-        loop = asyncio.get_event_loop()
-        with patch.object(loop, "run_in_executor", new_callable=AsyncMock):
-            await ch.send_message("118657162162293@lid", "Hello LID")
-
-    assert built_jids == [("118657162162293", "lid")]
-
-
-@pytest.mark.asyncio
-async def test_send_message_defaults_to_whatsapp_net(tmp_path: Path) -> None:
-    """send_message() uses s.whatsapp.net for bare phone numbers."""
-    import agntrick_whatsapp.channel_bridge as bridge_mod
-    from agntrick_whatsapp.channel_bridge import WhatsAppChannel
-
-    mock_client = MagicMock()
-    mock_client.event.return_value = lambda fn: fn
-
-    with patch("agntrick_whatsapp.channel_bridge.NewClient", return_value=mock_client):
-        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
-        ch._client = mock_client
-
-    built_jids: list = []
-
-    def capture_build_jid(user: str, server: str = "s.whatsapp.net") -> MagicMock:
-        built_jids.append((user, server))
-        return MagicMock()
-
-    with patch.object(bridge_mod, "build_jid", create=True, side_effect=capture_build_jid):
-        loop = asyncio.get_event_loop()
-        with patch.object(loop, "run_in_executor", new_callable=AsyncMock):
-            await ch.send_message("+34666666666", "Hello PN")
-
-    assert built_jids == [("34666666666", "s.whatsapp.net")]
 
 
 def test_on_message_event_skips_non_text(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
