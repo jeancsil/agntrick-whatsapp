@@ -190,14 +190,17 @@ class WhatsAppRouterAgent:
             command = self._command_parser.parse(message_text)
             logger.info(f"Parsed command: {command}")
 
-            # Handle commands
+            # Handle built-in commands; unrecognised slash-commands fall
+            # through to the LLM agent so prefixes like /ollama are
+            # forwarded as regular prompts.
             if command.command:
                 sender_id = self._get_sender_id(incoming)
                 response = await self._handle_command(command, sender_id)
-                await self._send_response(incoming, response)
-                return
+                if response is not None:
+                    await self._send_response(incoming, response)
+                    return
 
-            # For regular messages, process through the LLM agent
+            # Process through the LLM agent
             if self._agent:
                 result = await self._agent.run(message_text)
                 await self._send_response(incoming, str(result))
@@ -280,7 +283,7 @@ class WhatsAppRouterAgent:
     # Command dispatch
     # ------------------------------------------------------------------
 
-    async def _handle_command(self, command: Any, sender_id: str) -> str:
+    async def _handle_command(self, command: Any, sender_id: str) -> str | None:
         """Handle a parsed command and return a response string.
 
         Args:
@@ -288,7 +291,8 @@ class WhatsAppRouterAgent:
             sender_id: The sender's ID for scoping storage operations.
 
         Returns:
-            Response text to send back to the user.
+            Response text for built-in commands, or ``None`` if the command
+            is not recognised (so the caller can fall through to the LLM).
         """
         cmd = command.command
         args = command.args
@@ -304,7 +308,8 @@ class WhatsAppRouterAgent:
         elif cmd == "help":
             return self._cmd_help()
         else:
-            return f"Unknown command: /{cmd}. Type /help for available commands."
+            logger.info("Unrecognised command /%s — forwarding to LLM agent", cmd)
+            return None
 
     async def _cmd_note(self, args: list[str], sender_id: str) -> str:
         """Save a note for the sender.

@@ -196,14 +196,14 @@ class TestCommandHandlers:
         assert len(sent) == 1
         assert "Available commands" in sent[0][1]
 
-    async def test_handle_unknown_command_returns_error(self, router: WhatsAppRouterAgent) -> None:
-        """Test an unrecognised command returns an error message."""
-        message = {"sender_id": "user1", "text": "/unknown"}
+    async def test_handle_unknown_command_forwards_to_llm(self, router: WhatsAppRouterAgent) -> None:
+        """Unrecognised /commands fall through to the LLM agent."""
+        message = {"sender_id": "user1", "text": "/ollama some prompt"}
         await router._handle_message(message)
         sent = router.channel.messages_sent  # type: ignore[attr-defined]
         assert len(sent) == 1
-        assert "Unknown command" in sent[0][1]
-        assert "/help" in sent[0][1]
+        # Without an injected agent the router echoes the message
+        assert "Received (No LLM Agent)" in sent[0][1]
 
     async def test_handle_note_command_saves_note(self, router: WhatsAppRouterAgent) -> None:
         """Test /note <content> saves the note and confirms."""
