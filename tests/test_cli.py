@@ -1,11 +1,13 @@
 """Tests for the CLI module."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 import yaml
 from typer.testing import CliRunner
 
-from agntrick_whatsapp.cli import _config_template, _display_settings, app
+from agntrick_whatsapp.cli import _config_template, _display_settings, _run_agent, app
 from agntrick_whatsapp.runner_config import WhatsAppRunnerSettings
 
 runner = CliRunner()
@@ -120,15 +122,19 @@ class TestCLIStart:
         """start in bridge mode should print the startup banner then fail
         (neonize not available in test env) — we only test config resolution."""
         self._clean_env(monkeypatch, tmp_path)
-        result = runner.invoke(app, ["start", "--allowed-contact", "+34666"])
-        # It will try to actually start and fail (neonize) but the banner should appear
-        assert "Starting WhatsApp Agent" in result.output or result.exit_code == 1
+        # Mock _run_agent to prevent hanging when neonize is installed
+        with patch("agntrick_whatsapp.cli._run_agent"):
+            result = runner.invoke(app, ["start", "--allowed-contact", "+34666"])
+        # Banner should appear in output
+        assert "Starting WhatsApp Agent" in result.output
 
     def test_start_debug_shows_table(self, tmp_path: Path, monkeypatch):
         self._clean_env(monkeypatch, tmp_path)
-        result = runner.invoke(app, ["start", "--debug"])
+        # Mock _run_agent to prevent hanging when neonize is installed
+        with patch("agntrick_whatsapp.cli._run_agent"):
+            result = runner.invoke(app, ["start", "--debug"])
         # Debug mode should show the resolved config table
-        assert "Resolved Configuration" in result.output or result.exit_code == 1
+        assert "Resolved Configuration" in result.output
 
 
 class TestCLINoArgs:
@@ -184,3 +190,122 @@ class TestHelpers:
         captured = capsys.readouterr()
         assert "api" in captured.out
         assert "EAAtes" in captured.out  # truncated token
+
+
+class TestRunAgent:
+    """Test the _run_agent async function with proper mocking."""
+
+    @pytest.mark.asyncio
+    async def test_run_agent_bridge_mode(self, tmp_path: Path):
+        """Test _run_agent in bridge mode with mocked components."""
+        settings = WhatsAppRunnerSettings(
+            mode="bridge",
+            storage_path=tmp_path / "session",
+            db_path=tmp_path / "test.db",
+            allowed_contact="+12345",
+        )
+
+        # Mock the channel, router, and database
+        mock_channel = MagicMock()
+        mock_router = MagicMock()
+        mock_router.start = AsyncMock()
+        mock_router.stop = AsyncMock()
+
+        # Create an event that's already set so we don't hang
+        mock_stop_event = MagicMock()
+        mock_stop_event.wait = AsyncMock()
+
+        with (
+            patch("agntrick_whatsapp.channel.WhatsAppChannel", return_value=mock_channel),
+            patch("agntrick_whatsapp.router.WhatsAppRouterAgent", return_value=mock_router),
+            patch("agntrick_whatsapp.storage.Database"),
+            patch("asyncio.get_running_loop") as mock_loop,
+            patch("asyncio.Event", return_value=mock_stop_event),
+        ):
+            # Mock signal handler registration
+            mock_loop.return_value.add_signal_handler = MagicMock()
+
+            await _run_agent(settings)
+
+            # Verify router lifecycle
+            mock_router.start.assert_called_once()
+            mock_router.stop.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_agent_api_mode(self, tmp_path: Path):
+        """Test _run_agent in api mode with mocked components."""
+        settings = WhatsAppRunnerSettings(
+            mode="api",
+            storage_path=tmp_path / "session",
+            db_path=tmp_path / "test.db",
+            access_token="test_token",
+            phone_number_id="123456",
+        )
+
+        mock_channel = MagicMock()
+        mock_router = MagicMock()
+        mock_router.start = AsyncMock()
+        mock_router.stop = AsyncMock()
+
+        mock_stop_event = MagicMock()
+        mock_stop_event.wait = AsyncMock()
+
+        with (
+            patch("agntrick_whatsapp.channel.WhatsAppChannel", return_value=mock_channel),
+            patch("agntrick_whatsapp.router.WhatsAppRouterAgent", return_value=mock_router),
+            patch("agntrick_whatsapp.storage.Database"),
+            patch("asyncio.get_running_loop") as mock_loop,
+            patch("asyncio.Event", return_value=mock_stop_event),
+        ):
+            mock_loop.return_value.add_signal_handler = MagicMock()
+            await _run_agent(settings)
+            mock_router.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_agent_with_custom_system_prompt(self, tmp_path: Path):
+        """Test _run_agent with custom system prompt creates custom agent."""
+        settings = WhatsAppRunnerSettings(
+            mode="bridge",
+            storage_path=tmp_path / "session",
+            db_path=tmp_path / "test.db",
+            system_prompt="You are a test assistant.",
+        )
+
+        mock_channel = MagicMock()
+        mock_router = MagicMock()
+        mock_router.start = AsyncMock()
+        mock_router.stop = AsyncMock()
+
+        mock_stop_event = MagicMock()
+        mock_stop_event.wait = AsyncMock()
+
+        with (
+            patch("agntrick_whatsapp.channel.WhatsAppChannel", return_value=mock_channel),
+            patch("agntrick_whatsapp.router.WhatsAppRouterAgent", return_value=mock_router),
+            patch("agntrick_whatsapp.storage.Database"),
+            patch("asyncio.get_running_loop") as mock_loop,
+            patch("asyncio.Event", return_value=mock_stop_event),
+        ):
+            mock_loop.return_value.add_signal_handler = MagicMock()
+            await _run_agent(settings)
+            # Verify router was created with an agent
+            mock_router.start.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_run_agent_unknown_mode(self, tmp_path: Path, capsys):
+        """Test _run_agent with unknown mode returns early."""
+        # Create real paths for storage_path and db_path
+        storage_path = tmp_path / "session"
+        db_path = tmp_path / "data" / "test.db"
+        storage_path.mkdir(parents=True, exist_ok=True)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+
+        settings = MagicMock()
+        settings.mode = "unknown"
+        settings.storage_path = storage_path
+        settings.db_path = db_path
+
+        await _run_agent(settings)
+
+        captured = capsys.readouterr()
+        assert "Unknown mode" in captured.out
