@@ -22,13 +22,45 @@ logger = logging.getLogger(__name__)
 SCHEDULER_INTERVAL_SECONDS = 10
 
 
+# Default agent configuration
+DEFAULT_AGENT_NAME = "Aria"
+
+# MCP servers for default agent: web-forager (primary: search + fetch), fetch (backup)
+DEFAULT_MCP_SERVERS = ["web-forager", "fetch"]
+
 # System prompts
-DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant communicating through WhatsApp.
-Be concise and friendly in your responses.
-Avoid overly long explanations.
-Use emojis occasionally to be more conversational.
-If you need to show code or data, use formatted text blocks.
-Focus on being helpful and direct.
+DEFAULT_SYSTEM_PROMPT = f"""You are {DEFAULT_AGENT_NAME}, a helpful AI assistant on WhatsApp.
+
+## Your Capabilities
+- Conversational chat and Q&A
+- Web search via DuckDuckGo
+- Fetch and read web pages
+- General knowledge and helpful responses
+
+## Your Personality
+- Concise and friendly (WhatsApp is mobile-first)
+- Occasional emojis are fine 🌟
+- Answer directly, don't over-explain
+- Use minimal formatting
+
+## When to Suggest Specialized Agents
+If the user asks for things better handled by specialized agents, suggest them:
+
+| Request | Suggest This Agent |
+|---------|-------------------|
+| Coding, debugging, code review | /developer |
+| News & current events monitoring | /news |
+| Learning topics in depth | /learning |
+| YouTube video operations | /youtube |
+| GitHub PR reviews | /github-pr-reviewer |
+| Local LLM (privacy/offline) | /ollama |
+
+Example: "For flight searches, try /kiwi"
+
+## Important
+- You are {DEFAULT_AGENT_NAME} - the user can call you this
+- Don't make up capabilities you don't have
+- When uncertain, offering to search or fetch is helpful
 """
 
 # Router initialization now accepts a Channel object directly
@@ -125,13 +157,17 @@ class WhatsAppRouterAgent:
             if hasattr(self.channel, "initialize"):
                 await self.channel.initialize()
 
-            # Set up MCP servers
-            self._mcp_servers = self._mcp_servers_override or ["fetch"]
+            # Set up MCP servers (use override if provided, otherwise use defaults)
+            self._mcp_servers = self._mcp_servers_override or DEFAULT_MCP_SERVERS
 
             # Initialize a generic agent if one was not injected
             if self._agent is None:
                 # Import lazily to avoid circular dependencies if agntrick is linked
                 from agntrick.agent import AgentBase  # type: ignore[import-untyped]
+                from agntrick.mcp.provider import MCPProvider  # type: ignore[import-untyped]
+
+                # Create MCP provider with web-forager (primary) and fetch (backup)
+                mcp_provider = MCPProvider(server_names=self._mcp_servers)
 
                 class DefaultRouterAgent(AgentBase):
                     @property
@@ -144,6 +180,7 @@ class WhatsAppRouterAgent:
                 self._agent = DefaultRouterAgent(
                     model_name=self._model_name,
                     temperature=self._temperature,
+                    mcp_provider=mcp_provider,
                 )
 
             # Start listening for messages in a supervised background task
