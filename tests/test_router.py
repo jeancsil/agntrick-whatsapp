@@ -197,8 +197,8 @@ class TestCommandHandlers:
         assert "Available commands" in sent[0][1]
 
     async def test_handle_unknown_command_forwards_to_llm(self, router: WhatsAppRouterAgent) -> None:
-        """Unrecognised /commands fall through to the default LLM agent."""
-        message = {"sender_id": "user1", "text": "/nonexistentagent some prompt"}
+        """Unrecognised /commands fall through to the LLM agent."""
+        message = {"sender_id": "user1", "text": "/ollama some prompt"}
         await router._handle_message(message)
         sent = router.channel.messages_sent  # type: ignore[attr-defined]
         assert len(sent) == 1
