@@ -1,6 +1,8 @@
 """Tests for the CLI module."""
 
+import shutil
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,7 +12,10 @@ from typer.testing import CliRunner
 from agntrick_whatsapp.cli import _config_template, _display_settings, _run_agent, app
 from agntrick_whatsapp.runner_config import WhatsAppRunnerSettings
 
-runner = CliRunner(env={"COLUMNS": "120"})  # Set terminal width for consistent help output
+runner = CliRunner()
+
+# Fixed terminal size for consistent help output in tests
+_FIXED_TERMINAL_SIZE = SimpleNamespace(columns=120, lines=24)
 
 
 class TestCLIVersion:
@@ -154,7 +159,9 @@ class TestCLINoArgs:
         assert "init" in result.output
         assert "version" in result.output
 
-    def test_start_help(self):
+    def test_start_help(self, monkeypatch):
+        # Ensure consistent terminal width for help output
+        monkeypatch.setattr("shutil.get_terminal_size", lambda fallback=None: _FIXED_TERMINAL_SIZE)
         result = runner.invoke(app, ["start", "--help"])
         assert result.exit_code == 0
         assert "--allowed-contact" in result.output
