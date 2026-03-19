@@ -341,11 +341,15 @@ class WhatsAppRouterAgent:
             from agntrick.registry import AgentRegistry  # type: ignore[import-untyped]
 
             AgentRegistry.discover_agents()
+            available = AgentRegistry.list_agents()
+            logger.debug("Registered agents: %s", available)
+
             agent_cls = AgentRegistry.get(agent_name)
             if agent_cls is None:
+                logger.debug("Agent '%s' not found in registry", agent_name)
                 return None
 
-            logger.info("Routing to registered agent: %s", agent_name)
+            logger.info("Routing to registered agent: %s (%s)", agent_name, agent_cls.__name__)
 
             if agent_name not in self._registered_agents:
                 self._registered_agents[agent_name] = agent_cls()
