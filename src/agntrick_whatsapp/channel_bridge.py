@@ -439,19 +439,27 @@ class WhatsAppChannel:
 
         logger.info("Incoming message from %s (%s): %s", push_name or sender_number, sender_jid, text[:80])
 
-        # Contact filter — collect all candidate numbers (Sender, SenderAlt,
-        # Chat) because the primary Sender may be a LID that doesn't match
-        # a phone number.
+        # Contact filter.
+        # In LID addressing mode the Sender JID is a synthetic Linked ID
+        # that cannot be matched to a phone number.  ``IsFromMe`` is the
+        # authoritative protocol-level signal that the message was sent by
+        # the account owner, so we use it to bypass the phone-number check.
         if self.allowed_contact:
-            candidates = self._collect_candidate_numbers(event)
-            if self.allowed_contact not in candidates:
-                logger.info(
-                    "Filtered message from %s (candidates=%s, allowed=%s)",
-                    push_name or "unknown",
-                    candidates,
-                    self.allowed_contact,
-                )
-                return
+            source = getattr(info, "MessageSource", None) if info else None
+            is_from_me = getattr(source, "IsFromMe", False) if source else False
+
+            if not is_from_me:
+                candidates = self._collect_candidate_numbers(event)
+                if self.allowed_contact not in candidates:
+                    logger.info(
+                        "Filtered message from %s (candidates=%s, allowed=%s)",
+                        push_name or "unknown",
+                        candidates,
+                        self.allowed_contact,
+                    )
+                    return
+            else:
+                logger.debug("Allowing message from account owner (IsFromMe=True)")
 
         # Send typing indicator (sync, runs on this thread)
         self._send_typing(sender_jid)

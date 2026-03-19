@@ -382,17 +382,21 @@ def test_extract_sender_jid_unknown(channel: "WhatsAppChannel") -> None:  # type
 
 
 def test_on_message_event_processes_own_messages(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """Messages from our own account (IsFromMe=True) are still processed.
+    """Messages from our own account (IsFromMe=True) bypass the contact filter.
 
     The user runs neonize on their own WhatsApp — messages they type on
-    their phone arrive with IsFromMe=True via multi-device sync.
+    their phone arrive with IsFromMe=True via multi-device sync.  In LID
+    addressing mode the Sender JID is a Linked ID that cannot be matched
+    to the allowed phone number, so IsFromMe is the authoritative signal.
     """
     callback = AsyncMock()
     channel._message_callback = callback
     loop = asyncio.new_event_loop()
     channel._loop = loop
 
-    sender = MagicMock(User="34666666666", Server="s.whatsapp.net")
+    # Sender is a LID — does NOT match the allowed_contact phone number.
+    # IsFromMe=True signals that this is the account owner's message.
+    sender = MagicMock(User="118657162162293", Server="lid")
     source = MagicMock(IsFromMe=True, Sender=sender, Chat=sender)
     info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Me")
     msg = MagicMock()
@@ -455,33 +459,28 @@ def test_on_message_event_dispatches_allowed_contact(channel: "WhatsAppChannel")
     loop.close()
 
 
-def test_on_message_event_allows_lid_sender_when_chat_matches(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """A LID sender should be allowed when the Chat JID matches allowed_contact.
+def test_on_message_event_lid_sender_without_is_from_me_is_filtered(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """A LID sender without IsFromMe is filtered when no candidate matches.
 
-    WhatsApp may identify senders via a Linked ID (e.g. 118657162162293@lid)
-    instead of a phone JID.  The Chat JID still contains the phone number.
+    In full LID addressing mode all JIDs are Linked IDs.  If IsFromMe is
+    False (message from another person) and no candidate phone number
+    matches allowed_contact, the message must be filtered out.
     """
     callback = AsyncMock()
     channel._message_callback = callback
-    loop = asyncio.new_event_loop()
-    channel._loop = loop
+    channel._loop = MagicMock()
 
-    # Sender is a LID — does NOT match allowed_contact directly
-    sender = MagicMock(User="118657162162293", Server="lid")
-    # Chat contains the real phone number which matches allowed_contact
-    chat = MagicMock(User="34666666666", Server="s.whatsapp.net")
-    source = MagicMock(Sender=sender, Chat=chat, spec=["Sender", "Chat"])
-    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Jean")
+    sender = MagicMock(User="999999999999", Server="lid")
+    chat = MagicMock(User="999999999999", Server="lid")
+    source = MagicMock(IsFromMe=False, Sender=sender, Chat=chat)
+    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Stranger")
     msg = MagicMock()
     msg.HasField.side_effect = lambda f: f == "conversation"
     msg.conversation = "/ollama hello"
     event = MagicMock(Info=info, Message=msg)
 
-    with patch("agntrick_whatsapp.channel_bridge.asyncio.run_coroutine_threadsafe") as mock_schedule:
-        channel._on_message_event(MagicMock(), event)
-        mock_schedule.assert_called_once()
-
-    loop.close()
+    channel._on_message_event(MagicMock(), event)
+    assert callback.call_count == 0
 
 
 def test_collect_candidate_numbers(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
