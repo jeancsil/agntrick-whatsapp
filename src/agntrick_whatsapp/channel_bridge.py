@@ -280,15 +280,155 @@ class WhatsAppChannel:
             conn.execute("VACUUM")
             conn.commit()
 
+    def _extract_text(self, event: Any) -> str | None:
+        """Extract the text content from a neonize MessageEv protobuf.
+
+        Tries multiple paths since protobuf structure varies by message type.
+
+        Args:
+            event: A ``Neonize_pb2.Message`` protobuf instance.
+
+        Returns:
+            The plain-text string, or ``None`` if the message has no text.
+        """
+        try:
+            msg = getattr(event, "Message", None)
+            if msg is None:
+                return None
+
+            # Plain text message
+            try:
+                if msg.HasField("conversation") and msg.conversation:
+                    return str(msg.conversation)
+            except ValueError:
+                if getattr(msg, "conversation", None):
+                    return str(msg.conversation)
+
+            # Extended text (messages with link previews, quotes, etc.)
+            try:
+                if msg.HasField("extendedTextMessage") and msg.extendedTextMessage.text:
+                    return str(msg.extendedTextMessage.text)
+            except ValueError:
+                ext = getattr(msg, "extendedTextMessage", None)
+                if ext and getattr(ext, "text", None):
+                    return str(ext.text)
+
+            return None
+        except Exception as exc:
+            logger.warning("Failed to extract text from event: %s", exc)
+            return None
+
+    def _extract_sender_jid(self, event: Any) -> str:
+        """Return the raw sender JID string from a neonize MessageEv.
+
+        For 1-to-1 chats the sender equals the chat JID.  For groups the
+        ``Sender`` field identifies the individual participant.
+
+        Args:
+            event: A ``Neonize_pb2.Message`` protobuf instance.
+
+        Returns:
+            A JID string like ``"34666666666@s.whatsapp.net"``.
+        """
+        try:
+            info = getattr(event, "Info", None)
+            if info is None:
+                return "unknown"
+            source = getattr(info, "MessageSource", None)
+            if source is None:
+                return "unknown"
+
+            sender = getattr(source, "Sender", None)
+            if sender and getattr(sender, "User", None):
+                server = getattr(sender, "Server", "s.whatsapp.net")
+                return f"{sender.User}@{server}"
+
+            chat = getattr(source, "Chat", None)
+            if chat and getattr(chat, "User", None):
+                server = getattr(chat, "Server", "s.whatsapp.net")
+                return f"{chat.User}@{server}"
+
+            return "unknown"
+        except Exception as exc:
+            logger.warning("Failed to extract sender JID: %s", exc)
+            return "unknown"
+
     def _on_message_event(self, client: Any, event: Any) -> None:
         """Handle incoming message events from neonize.
 
+        Runs on a neonize C-callback thread, so we:
+        1. Extract text and sender from the protobuf event.
+        2. Filter by ``allowed_contact``.
+        3. Fire typing indicator.
+        4. Schedule the async callback on the main event loop.
+
         Args:
             client: The neonize client instance (passed by the event system).
-            event: The message event payload.
+            event: The ``Neonize_pb2.Message`` protobuf payload.
         """
-        if self._message_callback:
-            self._message_callback(event)
+        if not self._message_callback or not self._loop:
+            logger.debug(
+                "Event ignored: callback=%s, loop=%s",
+                self._message_callback is not None,
+                self._loop is not None,
+            )
+            return
+
+        # Skip our own outgoing messages
+        info = getattr(event, "Info", None)
+        source = getattr(info, "MessageSource", None) if info else None
+        is_from_me = getattr(source, "IsFromMe", False) if source else False
+
+        if is_from_me:
+            logger.debug("Skipping own outgoing message (IsFromMe=True)")
+            return
+
+        text = self._extract_text(event)
+        if not text:
+            msg_type = getattr(info, "Type", "?") if info else "?"
+            media_type = getattr(info, "MediaType", "") if info else ""
+            logger.debug("No text in event (type=%s, media=%s) — skipping", msg_type, media_type)
+            return
+
+        sender_jid = self._extract_sender_jid(event)
+        sender_number = self._normalize_phone_number(sender_jid)
+        push_name = getattr(info, "Pushname", "") if info else ""
+
+        logger.info("Incoming message from %s (%s): %s", push_name or sender_number, sender_jid, text[:80])
+
+        # Contact filter
+        if self.allowed_contact and sender_number != self.allowed_contact:
+            logger.info(
+                "Filtered message from %s (number=%s, allowed=%s)",
+                push_name or "unknown",
+                sender_number,
+                self.allowed_contact,
+            )
+            return
+
+        # Send typing indicator (sync, runs on this thread)
+        self._send_typing(sender_jid)
+
+        # Build a normalised dict the router already understands
+        normalized: dict[str, Any] = {
+            "text": text,
+            "sender_id": sender_jid,
+            "sender_number": sender_number,
+            "timestamp": getattr(info, "Timestamp", 0) if info else 0,
+            "push_name": push_name,
+            "raw_event": event,
+        }
+
+        async def _dispatch() -> None:
+            try:
+                assert self._message_callback is not None
+                await self._message_callback(normalized)
+            except Exception as exc:
+                logger.error("Error in message callback: %s", exc, exc_info=True)
+            finally:
+                await self._stop_typing(sender_jid)
+
+        asyncio.run_coroutine_threadsafe(_dispatch(), self._loop)
 
     def _restore_working_directory(self) -> None:
         """Restore the original working directory."""

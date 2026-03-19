@@ -308,6 +308,159 @@ async def test_shutdown_sets_stop_event(channel: "WhatsAppChannel") -> None:  # 
     assert channel._stop_event.is_set()
 
 
+# ---------------------------------------------------------------------------
+# _extract_text()
+# ---------------------------------------------------------------------------
+
+
+def test_extract_text_conversation(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_text returns plain conversation text."""
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "conversation"
+    msg.conversation = "Hello world"
+    event = MagicMock(Message=msg)
+    assert channel._extract_text(event) == "Hello world"
+
+
+def test_extract_text_extended(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_text returns extendedTextMessage.text when conversation is absent."""
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "extendedTextMessage"
+    msg.extendedTextMessage.text = "Extended text"
+    event = MagicMock(Message=msg)
+    assert channel._extract_text(event) == "Extended text"
+
+
+def test_extract_text_no_text(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_text returns None for non-text messages (image, video, etc.)."""
+    msg = MagicMock()
+    msg.HasField.return_value = False
+    event = MagicMock(Message=msg)
+    assert channel._extract_text(event) is None
+
+
+def test_extract_text_no_message(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_text returns None when event has no Message attribute."""
+    event = MagicMock(spec=[])
+    assert channel._extract_text(event) is None
+
+
+# ---------------------------------------------------------------------------
+# _extract_sender_jid()
+# ---------------------------------------------------------------------------
+
+
+def test_extract_sender_jid_from_sender(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_sender_jid returns Sender JID for direct messages."""
+    sender = MagicMock(User="34666666666", Server="s.whatsapp.net")
+    chat = MagicMock(User="34666666666", Server="s.whatsapp.net")
+    source = MagicMock(Sender=sender, Chat=chat)
+    info = MagicMock(MessageSource=source)
+    event = MagicMock(Info=info)
+    assert channel._extract_sender_jid(event) == "34666666666@s.whatsapp.net"
+
+
+def test_extract_sender_jid_fallback_to_chat(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_sender_jid falls back to Chat JID when Sender is empty."""
+    sender = MagicMock(User="", Server="")
+    chat = MagicMock(User="34999999999", Server="s.whatsapp.net")
+    source = MagicMock(Sender=sender, Chat=chat)
+    info = MagicMock(MessageSource=source)
+    event = MagicMock(Info=info)
+    assert channel._extract_sender_jid(event) == "34999999999@s.whatsapp.net"
+
+
+def test_extract_sender_jid_unknown(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_sender_jid returns 'unknown' when no Info present."""
+    event = MagicMock(spec=[])
+    assert channel._extract_sender_jid(event) == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# _on_message_event()
+# ---------------------------------------------------------------------------
+
+
+def test_on_message_event_skips_own_messages(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """Own outgoing messages (IsFromMe=True) are silently skipped."""
+    channel._message_callback = MagicMock()
+    channel._loop = MagicMock()
+
+    source = MagicMock(IsFromMe=True)
+    info = MagicMock(MessageSource=source)
+    event = MagicMock(Info=info)
+
+    channel._on_message_event(MagicMock(), event)
+    channel._loop.call_soon_threadsafe.assert_not_called()
+
+
+def test_on_message_event_filters_contact(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """Messages from non-allowed contacts are filtered out."""
+    callback = AsyncMock()
+    channel._message_callback = callback
+    channel._loop = MagicMock()
+
+    # Sender is NOT the allowed contact
+    sender = MagicMock(User="11111111111", Server="s.whatsapp.net")
+    source = MagicMock(IsFromMe=False, Sender=sender, Chat=sender)
+    info = MagicMock(MessageSource=source, Timestamp=0, Pushname="Other")
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "conversation"
+    msg.conversation = "Hi"
+    event = MagicMock(Info=info, Message=msg)
+
+    channel._on_message_event(MagicMock(), event)
+    # Should not have scheduled anything on the loop
+    assert not channel._loop.call_soon_threadsafe.called
+    # run_coroutine_threadsafe should not have been called either
+    assert callback.call_count == 0
+
+
+def test_on_message_event_dispatches_allowed_contact(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """Messages from the allowed contact are dispatched to the callback."""
+    callback = AsyncMock()
+    channel._message_callback = callback
+    loop = asyncio.new_event_loop()
+    channel._loop = loop
+
+    # Sender matches allowed contact (34666666666)
+    sender = MagicMock(User="34666666666", Server="s.whatsapp.net")
+    source = MagicMock(IsFromMe=False, Sender=sender, Chat=sender)
+    info = MagicMock(MessageSource=source, Timestamp=1234567890, Pushname="Jean")
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "conversation"
+    msg.conversation = "Hello bot"
+    event = MagicMock(Info=info, Message=msg)
+
+    with patch("agntrick_whatsapp.channel_bridge.asyncio.run_coroutine_threadsafe") as mock_schedule:
+        channel._on_message_event(MagicMock(), event)
+        mock_schedule.assert_called_once()
+        # Verify the coroutine was scheduled on the correct loop
+        assert mock_schedule.call_args[0][1] is loop
+
+    loop.close()
+
+
+def test_on_message_event_skips_non_text(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """Non-text messages (images, etc.) are skipped."""
+    channel._message_callback = AsyncMock()
+    channel._loop = MagicMock()
+
+    source = MagicMock(IsFromMe=False)
+    info = MagicMock(MessageSource=source)
+    msg = MagicMock()
+    msg.HasField.return_value = False
+    event = MagicMock(Info=info, Message=msg)
+
+    channel._on_message_event(MagicMock(), event)
+    assert not channel._loop.call_soon_threadsafe.called
+
+
+# ---------------------------------------------------------------------------
+# shutdown()
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_shutdown_does_not_change_cwd(tmp_path: Path) -> None:
     """shutdown() must not change the process CWD."""
