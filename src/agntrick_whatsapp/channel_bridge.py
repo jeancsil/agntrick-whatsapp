@@ -280,8 +280,13 @@ class WhatsAppChannel:
             conn.execute("VACUUM")
             conn.commit()
 
-    def _on_message_event(self, event: Any) -> None:
-        """Handle incoming message events from neonize."""
+    def _on_message_event(self, client: Any, event: Any) -> None:
+        """Handle incoming message events from neonize.
+
+        Args:
+            client: The neonize client instance (passed by the event system).
+            event: The message event payload.
+        """
         if self._message_callback:
             self._message_callback(event)
 
