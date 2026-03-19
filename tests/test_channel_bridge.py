@@ -381,23 +381,15 @@ def test_extract_sender_jid_unknown(channel: "WhatsAppChannel") -> None:  # type
 # ---------------------------------------------------------------------------
 
 
-def test_on_message_event_processes_own_messages(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """Messages from our own account (IsFromMe=True) bypass the contact filter.
-
-    The user runs neonize on their own WhatsApp — messages they type on
-    their phone arrive with IsFromMe=True via multi-device sync.  In LID
-    addressing mode the Sender JID is a Linked ID that cannot be matched
-    to the allowed phone number, so IsFromMe is the authoritative signal.
-    """
+def test_on_message_event_processes_self_chat(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """Self-chat messages (IsFromMe=True, Chat==Sender) are processed."""
     callback = AsyncMock()
     channel._message_callback = callback
     loop = asyncio.new_event_loop()
     channel._loop = loop
 
-    # Sender is a LID — does NOT match the allowed_contact phone number.
-    # IsFromMe=True signals that this is the account owner's message.
     sender = MagicMock(User="118657162162293", Server="lid")
-    source = MagicMock(IsFromMe=True, Sender=sender, Chat=sender)
+    source = MagicMock(IsFromMe=True, IsGroup=False, Sender=sender, Chat=sender)
     info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Me")
     msg = MagicMock()
     msg.HasField.side_effect = lambda f: f == "conversation"
@@ -411,6 +403,44 @@ def test_on_message_event_processes_own_messages(channel: "WhatsAppChannel") -> 
     loop.close()
 
 
+def test_on_message_event_ignores_outgoing_dm(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """Outgoing DMs (IsFromMe=True, Chat!=Sender) must be ignored."""
+    callback = AsyncMock()
+    channel._message_callback = callback
+    channel._loop = MagicMock()
+
+    sender = MagicMock(User="118657162162293", Server="lid")
+    other_person = MagicMock(User="999888777666", Server="s.whatsapp.net")
+    source = MagicMock(IsFromMe=True, IsGroup=False, Sender=sender, Chat=other_person)
+    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Me")
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "conversation"
+    msg.conversation = "Hey friend"
+    event = MagicMock(Info=info, Message=msg)
+
+    channel._on_message_event(MagicMock(), event)
+    assert callback.call_count == 0
+
+
+def test_on_message_event_ignores_group_messages(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """Group messages (IsGroup=True) must be ignored regardless of IsFromMe."""
+    callback = AsyncMock()
+    channel._message_callback = callback
+    channel._loop = MagicMock()
+
+    sender = MagicMock(User="118657162162293", Server="lid")
+    group = MagicMock(User="120363000000000000", Server="g.us")
+    source = MagicMock(IsFromMe=True, IsGroup=True, Sender=sender, Chat=group)
+    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Me")
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "conversation"
+    msg.conversation = "Hello group"
+    event = MagicMock(Info=info, Message=msg)
+
+    channel._on_message_event(MagicMock(), event)
+    assert callback.call_count == 0
+
+
 def test_on_message_event_filters_contact(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
     """Messages from non-allowed contacts are filtered out."""
     callback = AsyncMock()
@@ -420,7 +450,13 @@ def test_on_message_event_filters_contact(channel: "WhatsAppChannel") -> None:  
     # Neither Sender nor Chat matches the allowed contact
     sender = MagicMock(User="11111111111", Server="s.whatsapp.net")
     chat = MagicMock(User="11111111111", Server="s.whatsapp.net")
-    source = MagicMock(IsFromMe=False, Sender=sender, Chat=chat, spec=["IsFromMe", "Sender", "Chat"])
+    source = MagicMock(
+        IsFromMe=False,
+        IsGroup=False,
+        Sender=sender,
+        Chat=chat,
+        spec=["IsFromMe", "IsGroup", "Sender", "Chat"],
+    )
     info = MagicMock(MessageSource=source, Timestamp=0, Pushname="Other")
     msg = MagicMock()
     msg.HasField.side_effect = lambda f: f == "conversation"
@@ -443,7 +479,7 @@ def test_on_message_event_dispatches_allowed_contact(channel: "WhatsAppChannel")
 
     # Sender matches allowed contact (34666666666)
     sender = MagicMock(User="34666666666", Server="s.whatsapp.net")
-    source = MagicMock(IsFromMe=False, Sender=sender, Chat=sender)
+    source = MagicMock(IsFromMe=False, IsGroup=False, Sender=sender, Chat=sender)
     info = MagicMock(MessageSource=source, Timestamp=1234567890, Pushname="Jean")
     msg = MagicMock()
     msg.HasField.side_effect = lambda f: f == "conversation"
@@ -472,7 +508,7 @@ def test_on_message_event_lid_sender_without_is_from_me_is_filtered(channel: "Wh
 
     sender = MagicMock(User="999999999999", Server="lid")
     chat = MagicMock(User="999999999999", Server="lid")
-    source = MagicMock(IsFromMe=False, Sender=sender, Chat=chat)
+    source = MagicMock(IsFromMe=False, IsGroup=False, Sender=sender, Chat=chat)
     info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Stranger")
     msg = MagicMock()
     msg.HasField.side_effect = lambda f: f == "conversation"
