@@ -78,6 +78,9 @@ class WhatsAppRouterAgent:
         self.message_history: List[Dict[str, Any]] = []
         self.conversations: Dict[str, Dict[str, Any]] = {}
 
+        # Cache for lazily-instantiated registered agents (e.g. /ollama)
+        self._registered_agents: Dict[str, Any] = {}
+
         # Command parser
         self._command_parser = CommandParser()
 
@@ -286,13 +289,18 @@ class WhatsAppRouterAgent:
     async def _handle_command(self, command: Any, sender_id: str) -> str | None:
         """Handle a parsed command and return a response string.
 
+        Built-in commands (note, notes, remind, schedule, help) are handled
+        directly.  If the command name matches a registered agent in the
+        ``AgentRegistry`` (e.g. ``/ollama``), the prompt is forwarded to
+        that agent.  Otherwise ``None`` is returned so the caller can fall
+        through to the default LLM agent.
+
         Args:
             command: ParsedCommand with .command and .args attributes.
             sender_id: The sender's ID for scoping storage operations.
 
         Returns:
-            Response text for built-in commands, or ``None`` if the command
-            is not recognised (so the caller can fall through to the LLM).
+            Response text, or ``None`` if the command is not recognised.
         """
         cmd = command.command
         args = command.args
@@ -307,9 +315,51 @@ class WhatsAppRouterAgent:
             return await self._cmd_schedule(args, sender_id)
         elif cmd == "help":
             return self._cmd_help()
-        else:
-            logger.info("Unrecognised command /%s — forwarding to LLM agent", cmd)
-            return None
+
+        # Check if the command maps to a registered agent (e.g. /ollama)
+        result = await self._try_registered_agent(cmd, args)
+        if result is not None:
+            return result
+
+        logger.info("Unrecognised command /%s — forwarding to default LLM agent", cmd)
+        return None
+
+    async def _try_registered_agent(self, agent_name: str, args: list[str]) -> str | None:
+        """Try to dispatch a command to a registered agent.
+
+        Looks up ``agent_name`` in the ``AgentRegistry``.  If found,
+        instantiates (and caches) the agent and runs the prompt.
+
+        Args:
+            agent_name: The agent name to look up (e.g. ``"ollama"``).
+            args: The remaining arguments to join into a prompt.
+
+        Returns:
+            The agent's response string, or ``None`` if no matching agent.
+        """
+        try:
+            from agntrick.registry import AgentRegistry  # type: ignore[import-untyped]
+
+            AgentRegistry.discover_agents()
+            agent_cls = AgentRegistry.get(agent_name)
+            if agent_cls is None:
+                return None
+
+            logger.info("Routing to registered agent: %s", agent_name)
+
+            if agent_name not in self._registered_agents:
+                self._registered_agents[agent_name] = agent_cls()
+
+            agent = self._registered_agents[agent_name]
+            prompt = " ".join(args)
+            if not prompt:
+                return f"Usage: /{agent_name} <your prompt>"
+
+            result = await agent.run(prompt)
+            return str(result)
+        except Exception as exc:
+            logger.error("Error running registered agent '%s': %s", agent_name, exc, exc_info=True)
+            return f"Error from /{agent_name}: {exc}"
 
     async def _cmd_note(self, args: list[str], sender_id: str) -> str:
         """Save a note for the sender.
@@ -419,13 +469,25 @@ class WhatsAppRouterAgent:
         Returns:
             A multi-line help string.
         """
-        return (
-            "Available commands:\n"
-            "/note <content> - Save a note\n"
-            "/notes - List your notes\n"
-            "/remind <time> <message> - Set a reminder "
-            "(e.g., /remind 'in 30 minutes' call doctor)\n"
-            "/schedule <cron> <message> - Schedule recurring message "
-            "(e.g., /schedule '0 9 * * *' Good morning)\n"
-            "/help - Show this help"
-        )
+        lines = [
+            "Available commands:",
+            "/note <content> - Save a note",
+            "/notes - List your notes",
+            "/remind <time> <message> - Set a reminder (e.g., /remind 'in 30 minutes' call doctor)",
+            "/schedule <cron> <message> - Schedule recurring message (e.g., /schedule '0 9 * * *' Good morning)",
+            "/help - Show this help",
+        ]
+
+        try:
+            from agntrick.registry import AgentRegistry  # type: ignore[import-untyped]
+
+            AgentRegistry.discover_agents()
+            agents = AgentRegistry.list_agents()
+            if agents:
+                lines.append("\nAgent commands:")
+                for name in sorted(agents):
+                    lines.append(f"/{name} <prompt> - Route to {name} agent")
+        except Exception:
+            pass
+
+        return "\n".join(lines)
