@@ -342,28 +342,71 @@ class WhatsAppRouterAgent:
 
             AgentRegistry.discover_agents()
             available = AgentRegistry.list_agents()
-            logger.debug("Registered agents: %s", available)
+            logger.info("Registry contains agents: %s", available)
 
             agent_cls = AgentRegistry.get(agent_name)
+
             if agent_cls is None:
-                logger.debug("Agent '%s' not found in registry", agent_name)
+                agent_cls = self._try_direct_import(agent_name)
+
+            if agent_cls is None:
+                logger.info("Agent '%s' not found in registry or by direct import", agent_name)
                 return None
 
             logger.info("Routing to registered agent: %s (%s)", agent_name, agent_cls.__name__)
 
             if agent_name not in self._registered_agents:
+                logger.info("Instantiating agent '%s' …", agent_name)
                 self._registered_agents[agent_name] = agent_cls()
+                logger.info("Agent '%s' instantiated OK", agent_name)
 
             agent = self._registered_agents[agent_name]
             prompt = " ".join(args)
             if not prompt:
                 return f"Usage: /{agent_name} <your prompt>"
 
+            logger.info("Running agent '%s' with prompt: %s", agent_name, prompt[:80])
             result = await agent.run(prompt)
             return str(result)
         except Exception as exc:
             logger.error("Error running registered agent '%s': %s", agent_name, exc, exc_info=True)
             return f"Error from /{agent_name}: {exc}"
+
+    @staticmethod
+    def _try_direct_import(agent_name: str) -> type | None:
+        """Attempt to import an agent class directly by module name.
+
+        Fallback when ``AgentRegistry.discover_agents()`` silently fails
+        to import a module (its internal ``try/except`` swallows errors).
+
+        Args:
+            agent_name: The agent name, e.g. ``"ollama"``.
+
+        Returns:
+            The agent class, or ``None`` if import fails.
+        """
+        import importlib
+
+        module_path = f"agntrick.agents.{agent_name}"
+        try:
+            mod = importlib.import_module(module_path)
+            logger.info("Direct import of %s succeeded", module_path)
+        except Exception as exc:
+            logger.error("Direct import of %s FAILED: %s", module_path, exc, exc_info=True)
+            return None
+
+        class_map = {
+            name: obj
+            for name, obj in vars(mod).items()
+            if isinstance(obj, type) and name.lower().startswith(agent_name)
+        }
+        if class_map:
+            cls = next(iter(class_map.values()))
+            logger.info("Found agent class via direct import: %s", cls.__name__)
+            return cls  # type: ignore[return-value]
+
+        logger.warning("Module %s imported but no agent class found", module_path)
+        return None
 
     async def _cmd_note(self, args: list[str], sender_id: str) -> str:
         """Save a note for the sender.
