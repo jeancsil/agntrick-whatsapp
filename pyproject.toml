@@ -29,6 +29,9 @@ dependencies = [
 
 
 
+[project.scripts]
+agntrick-whatsapp = "agntrick_whatsapp.cli:app"
+
 [project.urls]
 Homepage = "https://github.com/jeancsil/agntrick-whatsapp"
 Documentation = "https://github.com/jeancsil/agntrick-whatsapp#readme"
