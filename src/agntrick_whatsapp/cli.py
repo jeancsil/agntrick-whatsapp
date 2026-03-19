@@ -249,11 +249,8 @@ async def _run_agent(settings: WhatsAppRunnerSettings) -> None:
     agent = None
     if settings.system_prompt:
         from agntrick.agent import AgentBase  # type: ignore[import-untyped]
-        from agntrick.mcp.provider import MCPProvider  # type: ignore[import-untyped]
 
         prompt_text = settings.system_prompt
-        mcp_servers = settings.mcp_servers or ["web-forager", "fetch"]
-        mcp_provider = MCPProvider(server_names=mcp_servers)
 
         class CustomPromptAgent(AgentBase):
             @property
@@ -266,7 +263,6 @@ async def _run_agent(settings: WhatsAppRunnerSettings) -> None:
         agent = CustomPromptAgent(
             model_name=settings.model_name,
             temperature=settings.temperature,
-            mcp_provider=mcp_provider,
         )
 
     # Build router
