@@ -381,17 +381,30 @@ def test_extract_sender_jid_unknown(channel: "WhatsAppChannel") -> None:  # type
 # ---------------------------------------------------------------------------
 
 
-def test_on_message_event_skips_own_messages(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
-    """Own outgoing messages (IsFromMe=True) are silently skipped."""
-    channel._message_callback = MagicMock()
-    channel._loop = MagicMock()
+def test_on_message_event_processes_own_messages(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """Messages from our own account (IsFromMe=True) are still processed.
 
-    source = MagicMock(IsFromMe=True)
-    info = MagicMock(MessageSource=source)
-    event = MagicMock(Info=info)
+    The user runs neonize on their own WhatsApp — messages they type on
+    their phone arrive with IsFromMe=True via multi-device sync.
+    """
+    callback = AsyncMock()
+    channel._message_callback = callback
+    loop = asyncio.new_event_loop()
+    channel._loop = loop
 
-    channel._on_message_event(MagicMock(), event)
-    channel._loop.call_soon_threadsafe.assert_not_called()
+    sender = MagicMock(User="34666666666", Server="s.whatsapp.net")
+    source = MagicMock(IsFromMe=True, Sender=sender, Chat=sender)
+    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Me")
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "conversation"
+    msg.conversation = "Hello"
+    event = MagicMock(Info=info, Message=msg)
+
+    with patch("agntrick_whatsapp.channel_bridge.asyncio.run_coroutine_threadsafe") as mock_schedule:
+        channel._on_message_event(MagicMock(), event)
+        mock_schedule.assert_called_once()
+
+    loop.close()
 
 
 def test_on_message_event_filters_contact(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
