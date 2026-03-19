@@ -374,14 +374,7 @@ class WhatsAppChannel:
             )
             return
 
-        # Skip our own outgoing messages
         info = getattr(event, "Info", None)
-        source = getattr(info, "MessageSource", None) if info else None
-        is_from_me = getattr(source, "IsFromMe", False) if source else False
-
-        if is_from_me:
-            logger.debug("Skipping own outgoing message (IsFromMe=True)")
-            return
 
         text = self._extract_text(event)
         if not text:
