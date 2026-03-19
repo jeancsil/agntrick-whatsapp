@@ -353,6 +353,41 @@ class WhatsAppChannel:
             logger.warning("Failed to extract sender JID: %s", exc)
             return "unknown"
 
+    def _collect_candidate_numbers(self, event: Any) -> set[str]:
+        """Collect all phone-number candidates from a message event.
+
+        WhatsApp may identify senders via LID (Linked ID) instead of a
+        phone-number-based JID.  To reliably match ``allowed_contact`` we
+        gather numbers from every JID field in the ``MessageSource``
+        (Sender, SenderAlt, Chat) and return the normalised set.
+
+        Args:
+            event: A ``Neonize_pb2.Message`` protobuf instance.
+
+        Returns:
+            A set of normalised phone-number strings (digits only).
+        """
+        numbers: set[str] = set()
+        try:
+            info = getattr(event, "Info", None)
+            if info is None:
+                return numbers
+            source = getattr(info, "MessageSource", None)
+            if source is None:
+                return numbers
+
+            for field in ("Sender", "SenderAlt", "Chat"):
+                jid = getattr(source, field, None)
+                if jid and getattr(jid, "User", None):
+                    server = getattr(jid, "Server", "")
+                    full = f"{jid.User}@{server}"
+                    normalised = self._normalize_phone_number(full)
+                    if normalised:
+                        numbers.add(normalised)
+        except Exception as exc:
+            logger.warning("Failed to collect candidate numbers: %s", exc)
+        return numbers
+
     def _on_message_event(self, client: Any, event: Any) -> None:
         """Handle incoming message events from neonize.
 
@@ -389,15 +424,19 @@ class WhatsAppChannel:
 
         logger.info("Incoming message from %s (%s): %s", push_name or sender_number, sender_jid, text[:80])
 
-        # Contact filter
-        if self.allowed_contact and sender_number != self.allowed_contact:
-            logger.info(
-                "Filtered message from %s (number=%s, allowed=%s)",
-                push_name or "unknown",
-                sender_number,
-                self.allowed_contact,
-            )
-            return
+        # Contact filter — collect all candidate numbers (Sender, SenderAlt,
+        # Chat) because the primary Sender may be a LID that doesn't match
+        # a phone number.
+        if self.allowed_contact:
+            candidates = self._collect_candidate_numbers(event)
+            if self.allowed_contact not in candidates:
+                logger.info(
+                    "Filtered message from %s (candidates=%s, allowed=%s)",
+                    push_name or "unknown",
+                    candidates,
+                    self.allowed_contact,
+                )
+                return
 
         # Send typing indicator (sync, runs on this thread)
         self._send_typing(sender_jid)
