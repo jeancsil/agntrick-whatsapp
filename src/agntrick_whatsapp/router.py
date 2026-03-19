@@ -59,6 +59,7 @@ class WhatsAppRouterAgent:
         audio_transcriber_config: Any = None,
         agent: Any = None,
         db: Any = None,
+        max_conversation_tokens: int = 4000,
     ) -> None:
         self.channel = channel
         self._model_name = model_name
@@ -73,6 +74,7 @@ class WhatsAppRouterAgent:
         self._db = db
         self._note_repo: Any = None
         self._task_repo: Any = None
+        self._max_conversation_tokens = max_conversation_tokens
 
         # Message history
         self.message_history: List[Dict[str, Any]] = []
@@ -83,6 +85,13 @@ class WhatsAppRouterAgent:
 
         # Command parser
         self._command_parser = CommandParser()
+
+        # Conversation management (uses same DB as notes/tasks)
+        self._conversation_manager: Any = None
+        if db is not None:
+            from .conversation import ConversationManager
+
+            self._conversation_manager = ConversationManager(db._db_path)
 
         logger.info(f"WhatsAppRouterAgent initialized with channel type: {type(channel).__name__}")
 
@@ -189,6 +198,9 @@ class WhatsAppRouterAgent:
             if not message_text:
                 return
 
+            # Extract sender_id early for conversation threading
+            sender_id = self._get_sender_id(incoming)
+
             # Check for commands using the stored command parser
             command = self._command_parser.parse(message_text)
             logger.info(f"Parsed command: {command}")
@@ -197,15 +209,26 @@ class WhatsAppRouterAgent:
             # through to the LLM agent so prefixes like /ollama are
             # forwarded as regular prompts.
             if command.command:
-                sender_id = self._get_sender_id(incoming)
                 response = await self._handle_command(command, sender_id)
                 if response is not None:
                     await self._send_response(incoming, response)
                     return
 
-            # Process through the LLM agent
+            # Process through the LLM agent with conversation memory
             if self._agent:
-                result = await self._agent.run(message_text)
+                if self._conversation_manager:
+                    thread_id = self._conversation_manager.get_thread_id(sender_id, "default")
+                    logger.info(f"Running default agent with thread_id: {thread_id}")
+
+                    result = await self._agent.run_with_memory(
+                        message_text,
+                        thread_id=thread_id,
+                        max_tokens=self._max_conversation_tokens,
+                    )
+                else:
+                    logger.info("Running default agent with prompt: %s", message_text[:80])
+                    result = await self._agent.run(message_text)
+
                 await self._send_response(incoming, str(result))
             else:
                 response = f"Received (No LLM Agent): {message_text}"
@@ -317,14 +340,14 @@ class WhatsAppRouterAgent:
             return self._cmd_help()
 
         # Check if the command maps to a registered agent (e.g. /ollama)
-        result = await self._try_registered_agent(cmd, args)
+        result = await self._try_registered_agent(cmd, args, sender_id)
         if result is not None:
             return result
 
         logger.info("Unrecognised command /%s — forwarding to default LLM agent", cmd)
         return None
 
-    async def _try_registered_agent(self, agent_name: str, args: list[str]) -> str | None:
+    async def _try_registered_agent(self, agent_name: str, args: list[str], sender_id: str) -> str | None:
         """Try to dispatch a command to a registered agent.
 
         Looks up ``agent_name`` in the ``AgentRegistry``.  If found,
@@ -333,6 +356,7 @@ class WhatsAppRouterAgent:
         Args:
             agent_name: The agent name to look up (e.g. ``"ollama"``).
             args: The remaining arguments to join into a prompt.
+            sender_id: The sender's ID for conversation threading.
 
         Returns:
             The agent's response string, or ``None`` if no matching agent.
@@ -365,8 +389,21 @@ class WhatsAppRouterAgent:
             if not prompt:
                 return f"Usage: /{agent_name} <your prompt>"
 
-            logger.info("Running agent '%s' with prompt: %s", agent_name, prompt[:80])
-            result = await agent.run(prompt)
+            # Use conversation memory if available
+            if self._conversation_manager:
+                thread_id = self._conversation_manager.get_thread_id(sender_id, agent_name)
+                logger.info(f"Running agent '{agent_name}' with thread_id: {thread_id}")
+
+                result = await agent.run_with_memory(
+                    prompt,
+                    thread_id=thread_id,
+                    max_tokens=self._max_conversation_tokens,
+                )
+            else:
+                # Fallback for no conversation manager
+                logger.info("Running agent '%s' with prompt: %s", agent_name, prompt[:80])
+                result = await agent.run(prompt)
+
             return str(result)
         except Exception as exc:
             logger.error("Error running registered agent '%s': %s", agent_name, exc, exc_info=True)

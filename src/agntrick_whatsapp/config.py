@@ -86,6 +86,8 @@ class WhatsAppRouterConfig(BaseModel):
     message_history_limit: int = Field(default=1000, description="Maximum messages to keep in history")
     max_conversation_length: int = Field(default=100, description="Maximum conversation length")
     debug_mode: bool = Field(default=False, description="Enable debug logging")
+    conversation_enabled: bool = Field(default=True, description="Enable conversation history")
+    max_conversation_tokens: int = Field(default=4000, description="Max tokens in conversation context")
 
     @field_validator("default_agent")
     @classmethod
