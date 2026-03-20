@@ -386,6 +386,7 @@ class WhatsAppRouterAgent:
                         message_text,
                         thread_id=thread_id,
                         max_tokens=self._max_conversation_tokens,
+                        checkpointer=self._conversation_manager.checkpointer,
                     )
                 else:
                     logger.info("Running default agent with prompt: %s", message_text[:80])
@@ -560,6 +561,7 @@ class WhatsAppRouterAgent:
                     prompt,
                     thread_id=thread_id,
                     max_tokens=self._max_conversation_tokens,
+                    checkpointer=self._conversation_manager.checkpointer,
                 )
             else:
                 # Fallback for no conversation manager
