@@ -156,6 +156,26 @@ Each curated tool includes:
 | Command failure | Exit code + stderr content |
 | Output too large | Truncated output with size warning |
 
+## Security Considerations
+
+### Path Confinement
+- All file operations are confined to `/workspace` directory
+- Paths outside `/workspace` are rejected with clear error message
+- Symlinks are resolved and checked against `/workspace` boundary
+- Absolute and relative path traversal (`../`) attempts are blocked
+
+### Shell Fallback Risks
+- `run_shell` is enabled by default but can be disabled via `TOOLBOX_SHELL_ENABLED=false`
+- Shell commands inherit the same `/workspace` confinement
+- No access to host filesystem or Docker socket
+- Future: Add command allowlist/blocklist for additional control
+
+### Container Isolation
+- Runs as non-root user inside container
+- No privileged mode required
+- Read-only root filesystem with tmpfs for /tmp
+- Network access limited to MCP server port
+
 ## Configuration
 
 Environment variables:
@@ -235,11 +255,25 @@ services:
       # Mount workspace for file operations
       - ${TOOLBOX_WORKSPACE:-./workspace}:/workspace:rw
     restart: unless-stopped
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+    # Security: run as non-root
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
 ```
 
 ### Configuring agntrick
