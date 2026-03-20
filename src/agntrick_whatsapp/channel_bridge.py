@@ -501,6 +501,11 @@ class WhatsAppChannel:
             finally:
                 await self._stop_typing(sender_jid)
 
+        # Guard against race condition during shutdown
+        if self._stop_event.is_set():
+            logger.debug("Skipping dispatch - shutdown in progress")
+            return
+
         asyncio.run_coroutine_threadsafe(_dispatch(), self._loop)
 
     def _restore_working_directory(self) -> None:
