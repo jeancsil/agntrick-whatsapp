@@ -617,3 +617,27 @@ class TestRouterLifecycle:
         # Should not raise
         await router.stop()
         assert not router._running
+
+    async def test_context_var_sender_id_propagates(self) -> None:
+        """Test that sender_id is set in context variable during message handling."""
+        from unittest.mock import MagicMock
+
+        channel = MockWhatsAppChannel()
+        mock_agent = MagicMock()
+
+        # Capture the context variable value when agent is called
+        captured_sender_id: list[str] = []
+
+        async def capture_run(prompt: str) -> str:
+            # Import the context variable from router module
+            from agntrick_whatsapp.router import _current_sender_id
+
+            captured_sender_id.append(_current_sender_id.get())
+            return "Response"
+
+        mock_agent.run = capture_run
+        router = WhatsAppRouterAgent(channel, agent=mock_agent)
+
+        await router._handle_message({"sender_id": "test_sender_123", "text": "hello"})
+
+        assert captured_sender_id == ["test_sender_123"]
