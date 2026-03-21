@@ -6,7 +6,7 @@
 
 ## Overview
 
-A Docker-based MCP server providing a curated CLI tool collection for LLM agents. Single container image with 50-80 curated tools exposed via MCP protocol, with shell fallback for additional commands.
+A Docker-based MCP server providing a curated CLI tool collection for LLM agents. Single container image with **60 curated tools** exposed via MCP protocol, with shell fallback for additional commands.
 
 ## Goals
 
@@ -57,7 +57,7 @@ A Docker-based MCP server providing a curated CLI tool collection for LLM agents
                                 │  - zip/unzip     │
                                 │  - rsync         │
                                 │                  │
-                                │  (~50-80 tools)  │
+                                │  (67 tools)      │
                                 └──────────────────┘
 ```
 
@@ -67,9 +67,9 @@ A Docker-based MCP server providing a curated CLI tool collection for LLM agents
 
 **Base:** `python:3.12-slim-bookworm`
 
-**Pre-installed tool categories (60 curated tools):**
+**Pre-installed tool categories (67 curated tools):**
 
-### Document Processing (12 tools)
+### Document Processing (10 tools)
 | Tool | Package | Purpose |
 |------|---------|---------|
 | pandoc | `pandoc` | Universal document converter (markdown, HTML, PDF, DOCX, etc.) |
@@ -79,8 +79,6 @@ A Docker-based MCP server providing a curated CLI tool collection for LLM agents
 | tesseract-ocr | `tesseract-ocr` | OCR for images and scanned PDFs |
 | ocrmypdf | `ocrmypdf` | Add OCR layer to PDFs |
 | marker | Python pip | Fast PDF to markdown with layout preservation |
-| ripgrep | `ripgrep` | Fast text search in documents |
-| fzf | `fzf` | Fuzzy finder for interactive selection |
 | bat | `bat` | Cat with syntax highlighting |
 | pup | `pup` | HTML parsing and extraction |
 | glow | `glow` | Markdown renderer for terminal |
@@ -97,7 +95,7 @@ A Docker-based MCP server providing a curated CLI tool collection for LLM agents
 | jpegoptim | `jpegoptim` | JPEG optimization |
 | gifsicle | `gifsicle` | GIF manipulation and optimization |
 
-### Data Processing (10 tools)
+### Data Processing (14 tools)
 | Tool | Package | Purpose |
 |------|---------|---------|
 | jq | `jq` | JSON processor and query |
@@ -110,8 +108,12 @@ A Docker-based MCP server providing a curated CLI tool collection for LLM agents
 | duckdb | `duckdb` | In-process SQL analytics database |
 | q | `python3-q` | Run SQL directly on CSV/TSV files |
 | gron | `gron` | Make JSON greppable |
+| sed | `sed` | Stream editor for text transformations |
+| gawk | `gawk` | Pattern scanning and processing language |
+| base64 | `coreutils` | Base64 encoding/decoding |
+| envsubst | `gettext-base` | Environment variable substitution in templates |
 
-### Dev/Utils (14 tools)
+### Dev/Utils (10 tools)
 | Tool | Package | Purpose |
 |------|---------|---------|
 | curl | `curl` | HTTP client for API testing |
@@ -121,15 +123,12 @@ A Docker-based MCP server providing a curated CLI tool collection for LLM agents
 | zip/unzip | `zip`, `unzip` | ZIP archive handling |
 | tar | `tar` | Tape archive handling |
 | zstd | `zstd` | Fast compression (Facebook's algorithm) |
-| fd | `fd-find` | Modern find alternative |
 | sdiff | `diffutils` | Side-by-side file comparison |
 | entr | `entr` | Run commands on file changes |
-| httpie | `httpie` | Human-friendly HTTP client |
 | parallel | `parallel` | Execute jobs in parallel |
 | tmux | `tmux` | Terminal multiplexer |
-| jq | `jq` | JSON processing (also in Data) |
 
-### Network Utilities (8 tools)
+### Network Utilities (7 tools)
 | Tool | Package | Purpose |
 |------|---------|---------|
 | ssh | `openssh-client` | Secure shell client |
@@ -139,7 +138,8 @@ A Docker-based MCP server providing a curated CLI tool collection for LLM agents
 | ngrok | Download binary | Tunnel localhost to public URL |
 | httpie | `httpie` | HTTP client with JSON support |
 | nmap | `nmap` | Network scanner and discovery |
-| curl | `curl` | HTTP client (also in Dev) |
+
+> **Cross-category tools:** `curl` is listed in Dev/Utils but also used for network operations. `ripgrep`, `fd`, `fzf` are in Search but also useful for document tasks. Tools are listed in their primary category.
 
 ### Search & Research (8 tools)
 | Tool | Package | Purpose |
@@ -355,25 +355,36 @@ agntrick-toolbox/
 │   └── agntrick_toolbox/
 │       ├── __init__.py
 │       ├── server.py          # FastMCP server entry point
+│       ├── config.py          # Settings and env vars
+│       ├── path_utils.py      # Workspace path validation
+│       ├── executor.py        # Command execution with timeout
 │       ├── tools/
 │       │   ├── __init__.py
 │       │   ├── document.py    # PDF, pandoc, etc.
 │       │   ├── media.py       # ffmpeg, imagemagick
-│       │   ├── data.py        # jq, csvkit, sqlite
+│       │   ├── data.py        # jq, csvkit, sqlite, sed, awk
 │       │   ├── utils.py       # curl, wget, compression
+│       │   ├── network.py     # ssh, openssl, httpie
+│       │   ├── search.py      # ripgrep, fd, fzf
+│       │   ├── communication.py # msmtp, notmuch
+│       │   ├── calendar.py    # calcurse, khal, taskwarrior
 │       │   └── shell.py       # run_shell fallback
-│       ├── schemas/
-│       │   ├── __init__.py
-│       │   └── definitions.py # Tool schema registry
-│       └── config.py          # Settings and env vars
+│       └── schemas/
+│           ├── __init__.py
+│           └── definitions.py # Tool schema registry
 └── tests/
     ├── __init__.py
-    ├── test_server.py
-    ├── test_tools/
-    │   ├── test_document.py
-    │   ├── test_media.py
-    │   └── test_data.py
-    └── conftest.py
+    ├── conftest.py            # Pytest fixtures
+    ├── test_path_utils.py     # Path validation tests
+    ├── test_executor.py       # Command execution tests
+    ├── test_server.py         # Server health tests
+    └── test_tools/
+        ├── __init__.py
+        ├── test_document.py
+        ├── test_media.py
+        ├── test_data.py
+        ├── test_utils.py
+        └── test_shell.py
 ```
 
 ## Usage
@@ -783,6 +794,30 @@ def register_shell_tool(mcp: FastMCP) -> None:
     if not settings.toolbox_shell_enabled:
         return
 
+    # Dangerous command patterns (blocklist approach)
+    DANGEROUS_PATTERNS = [
+        # System destruction
+        r"\brm\s+-rf\s+/",
+        r"\brm\s+-rf\s+/*",
+        r"\brm\s+-rf\s+~",
+        r"\bmkfs\b",
+        r"\bdd\s+.*of=/dev/",
+        r"\b:()\s*\{\s*:\|:&\s*\}",  # Fork bomb
+        # Privilege escalation
+        r"\bsudo\b",
+        r"\bsu\b",
+        r"\bchmod\s+777\b",
+        r"\bchown\b.*root",
+        # Network exfiltration (basic patterns)
+        r"\bcurl\b.*\|\s*sh",
+        r"\bwget\b.*\|\s*sh",
+        r"\bnc\b.*-e\s+/bin",
+        # System modification
+        r"\biptables\b",
+        r"\bsystemctl\b",
+        r"\binit\b",
+    ]
+
     @mcp.tool()
     async def run_shell(
         command: str,
@@ -800,10 +835,12 @@ def register_shell_tool(mcp: FastMCP) -> None:
         Returns:
             Command output or error message
         """
-        # Basic command validation
-        dangerous = ["rm -rf /", "sudo", "chmod 777", "> /dev/"]
-        if any(d in command for d in dangerous):
-            return "Error: Potentially dangerous command blocked"
+        import re
+
+        # Validate command against dangerous patterns
+        for pattern in DANGEROUS_PATTERNS:
+            if re.search(pattern, command, re.IGNORECASE):
+                return f"Error: Command blocked by security policy (matched pattern)"
 
         # Cap timeout
         timeout = min(timeout, 300)
@@ -838,10 +875,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     calibre \
     tesseract-ocr \
     ocrmypdf \
-    ripgrep \
-    fzf \
     bat \
     pup \
+    glow \
     # Media tools
     ffmpeg \
     imagemagick \
@@ -860,6 +896,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     visidata \
     xsv \
     duckdb \
+    python3-q \
+    gron \
+    gawk \
+    sed \
+    coreutils \
+    gettext-base \
+    # Search tools
+    ripgrep \
+    fd-find \
+    fzf \
+    silversearcher-ag \
+    ugrep \
+    mlocate \
     # Dev/Utils
     curl \
     wget \
@@ -869,21 +918,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     tar \
     zstd \
-    fd-find \
     diffutils \
     entr \
-    httpie \
     parallel \
     tmux \
     # Network
     openssh-client \
     openssl \
     netcat-openbsd \
+    httpie \
     nmap \
-    # Search
-    silversearcher-ag \
-    ugrep \
-    mlocate \
     # Communication
     msmtp \
     offlineimap \
@@ -894,9 +938,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     khal \
     remind \
     taskwarrior \
+    nb \
+    jrnl \
     # Build tools for Python packages
     build-essential \
+    curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Install binary tools not in apt
+RUN curl -LO https://github.com/ast-grep/ast-grep/releases/latest/download/ast-grep-linux-x64.tar.gz \
+    && tar -xzf ast-grep-linux-x64.tar.gz -C /usr/local/bin sg \
+    && rm ast-grep-linux-x64.tar.gz \
+    && mv /usr/local/bin/sg /usr/local/bin/ast-grep
+
+# Install Python tools
+RUN pip install --no-cache-dir marker-pdf
+
+# Install ngrok (requires separate download)
+# Note: ngrok requires auth token - users should mount their own binary
+# or set up at runtime
 
 # Install Python package
 WORKDIR /app
@@ -911,9 +971,6 @@ RUN useradd -m -u 1000 toolbox && \
 
 USER toolbox
 WORKDIR /workspace
-
-# Read-only root with tmpfs
-# (Set in docker-compose, not here)
 
 EXPOSE 8080
 
@@ -938,6 +995,8 @@ from .tools.data import register_data_tools
 from .tools.utils import register_utils_tools
 from .tools.network import register_network_tools
 from .tools.search import register_search_tools
+from .tools.communication import register_communication_tools
+from .tools.calendar import register_calendar_tools
 from .tools.shell import register_shell_tool
 
 logging.basicConfig(level=getattr(logging, settings.toolbox_log_level))
@@ -945,14 +1004,16 @@ logger = logging.getLogger(__name__)
 
 mcp = FastMCP("agntrick-toolbox")
 
-# Register all tools
-register_document_tools(mcp)
-register_media_tools(mcp)
-register_data_tools(mcp)
-register_utils_tools(mcp)
-register_network_tools(mcp)
-register_search_tools(mcp)
-register_shell_tool(mcp)
+# Register all tools by category
+register_document_tools(mcp)      # 9 tools
+register_media_tools(mcp)         # 8 tools
+register_data_tools(mcp)          # 14 tools
+register_utils_tools(mcp)         # 10 tools
+register_network_tools(mcp)       # 7 tools
+register_search_tools(mcp)        # 8 tools
+register_communication_tools(mcp) # 4 tools
+register_calendar_tools(mcp)      # 6 tools
+register_shell_tool(mcp)          # 1 fallback tool
 
 @mcp.tool()
 async def health_check() -> str:
@@ -985,26 +1046,69 @@ def test_settings(tmp_path):
         toolbox_timeout_default=5,
     )
 
-# tests/test_tools/test_document.py
+# tests/test_path_utils.py
 import pytest
-from pathlib import Path
-from agntrick_toolbox.tools.document import pdf_extract_text
-from agntrick_toolbox.path_utils import PathValidationError
+from agntrick_toolbox.path_utils import validate_workspace_path, PathValidationError
 
-class TestPdfExtractText:
-    async def test_rejects_path_outside_workspace(self, tmp_path):
+class TestPathValidation:
+    def test_rejects_path_outside_workspace(self, tmp_path, monkeypatch):
         """Must reject paths outside workspace."""
+        monkeypatch.setattr(
+            "agntrick_toolbox.path_utils.settings.toolbox_workspace",
+            str(tmp_path)
+        )
         with pytest.raises(PathValidationError):
             validate_workspace_path("/etc/passwd")
 
-    async def test_extracts_text_from_pdf(self, tmp_path):
+    def test_accepts_path_inside_workspace(self, tmp_path, monkeypatch):
+        """Must accept paths inside workspace."""
+        monkeypatch.setattr(
+            "agntrick_toolbox.path_utils.settings.toolbox_workspace",
+            str(tmp_path)
+        )
+        result = validate_workspace_path("test.txt")
+        assert str(tmp_path) in str(result)
+
+    def test_rejects_path_traversal(self, tmp_path, monkeypatch):
+        """Must reject ../ traversal attempts."""
+        monkeypatch.setattr(
+            "agntrick_toolbox.path_utils.settings.toolbox_workspace",
+            str(tmp_path)
+        )
+        with pytest.raises(PathValidationError):
+            validate_workspace_path("../../../etc/passwd")
+
+# tests/test_tools/test_document.py
+import pytest
+from pathlib import Path
+from unittest.mock import AsyncMock, patch
+from agntrick_toolbox.executor import CommandResult
+
+class TestPdfExtractText:
+    async def test_extracts_text_from_pdf(self, tmp_path, monkeypatch):
         """Should extract text from a valid PDF."""
-        # Create a simple test PDF
-        # ... test implementation
+        from mcp.server.fastmcp import FastMCP
+        from agntrick_toolbox.tools.document import register_document_tools
+
+        mcp = FastMCP("test")
+        register_document_tools(mcp)
+
+        # Mock the command execution
+        with patch("agntrick_toolbox.tools.document.run_command") as mock_run:
+            mock_run.return_value = CommandResult(
+                success=True,
+                stdout="Extracted text content",
+                stderr="",
+                exit_code=0
+            )
+            # Call tool through MCP
+            # In real tests, use mcp's test client
+            # result = await mcp.call_tool("pdf_extract_text", {...})
 
     async def test_handles_page_ranges(self, tmp_path):
         """Should correctly parse page range arguments."""
-        # ... test implementation
+        # Test page range parsing logic
+        pass
 ```
 
 ### Phase 7: Build and Deploy
