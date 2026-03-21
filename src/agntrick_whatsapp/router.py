@@ -6,6 +6,7 @@ This version supports both:
 """
 
 import asyncio
+import contextvars
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List
 
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 # Constants
 SCHEDULER_INTERVAL_SECONDS = 10
 
+# Context variable for passing sender_id through async boundaries
+# Used by invoke_agent tool to access conversation memory
+_current_sender_id: contextvars.ContextVar[str] = contextvars.ContextVar("sender_id", default="unknown")
 
 # Default agent configuration
 DEFAULT_AGENT_NAME = "Aria"
@@ -35,6 +39,7 @@ DEFAULT_SYSTEM_PROMPT = f"""You are {DEFAULT_AGENT_NAME}, a helpful AI assistant
 - Conversational chat and Q&A
 - Web search via DuckDuckGo
 - Fetch and read web pages
+- **Invoke specialized agents** for specific tasks (use the invoke_agent tool)
 - General knowledge and helpful responses
 
 ## Your Personality
@@ -43,29 +48,141 @@ DEFAULT_SYSTEM_PROMPT = f"""You are {DEFAULT_AGENT_NAME}, a helpful AI assistant
 - Answer directly, don't over-explain
 - Use minimal formatting
 
-## When to Suggest Specialized Agents
-If the user asks for things better handled by specialized agents, suggest them:
+## Invoking Specialized Agents
+You have the `invoke_agent` tool which allows you to directly delegate tasks to specialized agents:
 
-| Request | Suggest This Agent |
-|---------|-------------------|
-| Coding, debugging, code review | /developer |
-| News & current events monitoring | /news |
-| Learning topics in depth | /learning |
-| YouTube video operations | /youtube |
-| GitHub PR reviews | /github-pr-reviewer |
-| Local LLM (privacy/offline) | /ollama |
+| For this... | Use this agent |
+|-------------|----------------|
+| Coding, debugging, code review | developer |
+| News & current events monitoring | news |
+| Learning topics in depth | learning |
+| YouTube video operations | youtube |
+| GitHub PR reviews | github-pr-reviewer |
+| Local LLM (privacy/offline) | ollama |
+| Flight searches | kiwi |
 
-Example: "For flight searches, try /kiwi"
+**IMPORTANT:** You CAN invoke these agents directly using the
+`invoke_agent` tool. Don't just suggest them — actually use the tool
+when the user asks for something a specialist can handle.
+
+Example: If user asks "Can you review these PRs?", use `invoke_agent`
+with agent_name="github-pr-reviewer" and the prompt containing the PR URLs.
 
 ## Important
 - You are {DEFAULT_AGENT_NAME} - the user can call you this
 - Don't make up capabilities you don't have
 - When uncertain, offering to search or fetch is helpful
+- PROACTIVELY use invoke_agent when it makes sense — don't make the user
+  type slash commands
 """
 
 # Router initialization now accepts a Channel object directly
 # The channel can be either Business API or Bridge implementation
 # and will provide the appropriate methods (send, listen, shutdown, initialize)
+
+
+def _make_invoke_agent_tool(router: "WhatsAppRouterAgent") -> Any:
+    """Create a tool that allows the default agent to invoke other registered agents.
+
+    Args:
+        router: The WhatsAppRouterAgent instance with access to registered agents.
+
+    Returns:
+        A tool function that can be called by the LLM to delegate to specialized agents.
+    """
+    from agntrick.registry import AgentRegistry  # type: ignore[import-untyped]
+
+    async def invoke_agent(agent_name: str, prompt: str) -> str:
+        """Invoke a specialized agent to handle a specific task.
+
+        Available agents: github-pr-reviewer, news, ollama, developer, learning, youtube, kiwi, etc.
+
+        Args:
+            agent_name: The name of the agent to invoke (e.g., "github-pr-reviewer", "news", "ollama").
+            prompt: The prompt/task to send to the agent.
+
+        Returns:
+            The agent's response as a string.
+        """
+        # Normalize agent_name: strip whitespace and trailing punctuation
+        # (LLM may include commas from the tool description)
+        agent_name = agent_name.strip().rstrip(",.").lower()
+
+        try:
+            AgentRegistry.discover_agents()
+            available = AgentRegistry.list_agents()
+
+            if agent_name not in available:
+                # Try direct import as fallback
+                agent_cls = router._try_direct_import(agent_name)
+                if agent_cls is None:
+                    return f"Error: Agent '{agent_name}' not found. Available agents: {', '.join(available)}"
+
+            # Instantiate agent if not cached
+            if agent_name not in router._registered_agents:
+                if agent_name in available:
+                    agent_cls = AgentRegistry.get(agent_name)
+                else:
+                    agent_cls = router._try_direct_import(agent_name)
+
+                if agent_cls is None:
+                    return f"Error: Could not instantiate agent '{agent_name}'"
+
+                router._registered_agents[agent_name] = agent_cls()
+
+            agent = router._registered_agents[agent_name]
+
+            # Get sender_id from context for conversation memory
+            sender_id = _current_sender_id.get()
+            logger.info(f"Tool invoking agent '{agent_name}' with prompt: {prompt[:80]} (sender: {sender_id})")
+
+            # Use conversation memory if available and sender_id is known
+            if router._conversation_manager and sender_id != "unknown":
+                thread_id = router._conversation_manager.get_thread_id(sender_id, agent_name)
+                result = await agent.run_with_memory(
+                    prompt,
+                    thread_id=thread_id,
+                    max_tokens=router._max_conversation_tokens,
+                    checkpointer=router._conversation_manager.checkpointer,
+                )
+            else:
+                result = await agent.run(prompt)
+            return str(result)
+
+        except Exception as exc:
+            logger.error(f"Error in invoke_agent tool: {exc}", exc_info=True)
+            return f"Error invoking agent '{agent_name}': {exc}"
+
+    # Set tool metadata for the LLM
+    invoke_agent.description = (  # type: ignore[attr-defined]
+        "Invoke a specialized agent to handle specific tasks. "
+        "Use this when the user requests capabilities that are better handled by specialist agents. "
+        "Available agents include: github-pr-reviewer (PR reviews), news (current events), "
+        "ollama (local LLM), developer (coding), learning (deep learning), youtube (video ops), kiwi (flights)."
+    )
+
+    return invoke_agent
+
+
+def _inject_invoke_agent_tool(agent: Any, router: "WhatsAppRouterAgent") -> None:
+    """Inject the invoke_agent tool into a pre-existing agent instance.
+
+    Wraps the agent's local_tools method to include the invoke_agent tool.
+
+    Args:
+        agent: The agent instance to modify.
+        router: The WhatsAppRouterAgent instance with access to registered agents.
+    """
+    original_local_tools = agent.local_tools
+    invoke_tool = _make_invoke_agent_tool(router)
+
+    def wrapped_local_tools() -> list:  # type: ignore[misc]
+        original_tools = original_local_tools() if callable(original_local_tools) else original_local_tools
+        if isinstance(original_tools, list):
+            return original_tools + [invoke_tool]
+        return [invoke_tool]
+
+    agent.local_tools = wrapped_local_tools
 
 
 class WhatsAppRouterAgent:
@@ -169,19 +286,28 @@ class WhatsAppRouterAgent:
                 # Create MCP provider with web-forager (primary) and fetch (backup)
                 mcp_provider = MCPProvider(server_names=self._mcp_servers)
 
+                # Capture router for tool access
+                router_instance = self
+
                 class DefaultRouterAgent(AgentBase):
                     @property
                     def system_prompt(self) -> str:
                         return DEFAULT_SYSTEM_PROMPT
 
                     def local_tools(self) -> list:
-                        return []
+                        """Return tools that allow invoking other registered agents."""
+                        return [
+                            _make_invoke_agent_tool(router_instance),
+                        ]
 
                 self._agent = DefaultRouterAgent(
                     model_name=self._model_name,
                     temperature=self._temperature,
                     mcp_provider=mcp_provider,
                 )
+            else:
+                # Inject invoke_agent tool into custom-provided agent
+                _inject_invoke_agent_tool(self._agent, self)
 
             # Start listening for messages in a supervised background task
             self._listen_task = asyncio.create_task(self.channel.listen(self._handle_message))
@@ -251,6 +377,9 @@ class WhatsAppRouterAgent:
                     await self._send_response(incoming, response)
                     return
 
+            # Set sender_id in context for tools that need conversation access
+            _current_sender_id.set(sender_id)
+
             # Process through the LLM agent with conversation memory
             if self._agent:
                 if self._conversation_manager:
@@ -261,6 +390,7 @@ class WhatsAppRouterAgent:
                         message_text,
                         thread_id=thread_id,
                         max_tokens=self._max_conversation_tokens,
+                        checkpointer=self._conversation_manager.checkpointer,
                     )
                 else:
                     logger.info("Running default agent with prompt: %s", message_text[:80])
@@ -435,6 +565,7 @@ class WhatsAppRouterAgent:
                     prompt,
                     thread_id=thread_id,
                     max_tokens=self._max_conversation_tokens,
+                    checkpointer=self._conversation_manager.checkpointer,
                 )
             else:
                 # Fallback for no conversation manager

@@ -6,6 +6,7 @@ All neonize interactions are mocked so these tests run without system packages.
 import asyncio
 import os
 import threading
+import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -635,3 +636,492 @@ async def test_shutdown_does_not_change_cwd(tmp_path: Path) -> None:
     await ch.shutdown()
 
     assert Path.cwd() == original_cwd, "shutdown() must not change the process CWD"
+
+
+# ---------------------------------------------------------------------------
+# _send_typing()
+# ---------------------------------------------------------------------------
+
+
+def test_send_typing_sends_indicator(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_send_typing sends typing indicator when client is available."""
+    import agntrick_whatsapp.channel_bridge as bridge_mod
+
+    mock_client = MagicMock()
+    channel._client = mock_client
+    channel.typing_indicators = True
+
+    mock_jid = MagicMock()
+    with patch.object(bridge_mod, "build_jid", create=True, return_value=mock_jid):
+        with patch.object(bridge_mod, "ChatPresence", create=True, CHAT_PRESENCE_COMPOSING="composing"):
+            with patch.object(bridge_mod, "ChatPresenceMedia", create=True, CHAT_PRESENCE_MEDIA_TEXT="text"):
+                channel._send_typing("34666666666@s.whatsapp.net")
+
+    mock_client.send_chat_presence.assert_called_once()
+    assert "34666666666@s.whatsapp.net" in channel._typing_jids
+
+
+def test_send_typing_skips_when_disabled(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_send_typing does nothing when typing_indicators is False."""
+    channel._client = MagicMock()
+    channel.typing_indicators = False
+
+    channel._send_typing("34666666666@s.whatsapp.net")
+
+    assert len(channel._typing_jids) == 0
+
+
+def test_send_typing_skips_when_no_client(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_send_typing does nothing when client is None."""
+    channel._client = None
+    channel.typing_indicators = True
+
+    channel._send_typing("34666666666@s.whatsapp.net")
+
+    assert len(channel._typing_jids) == 0
+
+
+def test_send_typing_handles_exception(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_send_typing logs warning but does not raise on exception."""
+    import agntrick_whatsapp.channel_bridge as bridge_mod
+
+    mock_client = MagicMock()
+    mock_client.send_chat_presence.side_effect = RuntimeError("Failed to send")
+    channel._client = mock_client
+    channel.typing_indicators = True
+
+    mock_jid = MagicMock()
+    with patch.object(bridge_mod, "build_jid", create=True, return_value=mock_jid):
+        with patch.object(bridge_mod, "ChatPresence", create=True, CHAT_PRESENCE_COMPOSING="composing"):
+            with patch.object(bridge_mod, "ChatPresenceMedia", create=True, CHAT_PRESENCE_MEDIA_TEXT="text"):
+                # Should not raise
+                channel._send_typing("34666666666@s.whatsapp.net")
+
+    # JID should not be added since it failed
+    assert "34666666666@s.whatsapp.net" not in channel._typing_jids
+
+
+# ---------------------------------------------------------------------------
+# _stop_typing()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_stop_typing_sends_paused(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_stop_typing sends paused indicator when typing was active."""
+    import agntrick_whatsapp.channel_bridge as bridge_mod
+
+    mock_client = MagicMock()
+    channel._client = mock_client
+    channel.typing_indicators = True
+    jid = "34666666666@s.whatsapp.net"
+    channel._typing_jids.add(jid)
+    channel._typing_start_times[jid] = time.time() - 5  # Started 5 seconds ago
+
+    mock_jid = MagicMock()
+    with patch.object(bridge_mod, "build_jid", create=True, return_value=mock_jid):
+        with patch.object(bridge_mod, "ChatPresence", create=True, CHAT_PRESENCE_PAUSED="paused"):
+            with patch.object(bridge_mod, "ChatPresenceMedia", create=True, CHAT_PRESENCE_MEDIA_TEXT="text"):
+                await channel._stop_typing(jid)
+
+    mock_client.send_chat_presence.assert_called_once()
+    assert jid not in channel._typing_jids
+
+
+@pytest.mark.asyncio
+async def test_stop_typing_waits_for_min_duration(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_stop_typing waits for min_typing_duration before sending paused."""
+    import agntrick_whatsapp.channel_bridge as bridge_mod
+
+    mock_client = MagicMock()
+    channel._client = mock_client
+    channel.typing_indicators = True
+    channel._min_typing_duration = 0.1  # Short duration for test
+    jid = "34666666666@s.whatsapp.net"
+    channel._typing_jids.add(jid)
+    channel._typing_start_times[jid] = time.time()  # Just started
+
+    mock_jid = MagicMock()
+    with patch.object(bridge_mod, "build_jid", create=True, return_value=mock_jid):
+        with patch.object(bridge_mod, "ChatPresence", create=True, CHAT_PRESENCE_PAUSED="paused"):
+            with patch.object(bridge_mod, "ChatPresenceMedia", create=True, CHAT_PRESENCE_MEDIA_TEXT="text"):
+                start = time.time()
+                await channel._stop_typing(jid)
+                elapsed = time.time() - start
+
+    # Should have waited for min duration
+    assert elapsed >= 0.1
+
+
+@pytest.mark.asyncio
+async def test_stop_typing_skips_when_not_in_jids(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_stop_typing does nothing when JID not in _typing_jids."""
+    channel._client = MagicMock()
+    channel.typing_indicators = True
+
+    await channel._stop_typing("34666666666@s.whatsapp.net")
+
+    channel._client.send_chat_presence.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stop_typing_handles_exception(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_stop_typing logs warning but does not raise on exception."""
+    import agntrick_whatsapp.channel_bridge as bridge_mod
+
+    mock_client = MagicMock()
+    mock_client.send_chat_presence.side_effect = RuntimeError("Failed to stop")
+    channel._client = mock_client
+    channel.typing_indicators = True
+    jid = "34666666666@s.whatsapp.net"
+    channel._typing_jids.add(jid)
+    channel._typing_start_times[jid] = time.time() - 5
+
+    mock_jid = MagicMock()
+    with patch.object(bridge_mod, "build_jid", create=True, return_value=mock_jid):
+        with patch.object(bridge_mod, "ChatPresence", create=True, CHAT_PRESENCE_PAUSED="paused"):
+            with patch.object(bridge_mod, "ChatPresenceMedia", create=True, CHAT_PRESENCE_MEDIA_TEXT="text"):
+                # Should not raise
+                await channel._stop_typing(jid)
+
+
+# ---------------------------------------------------------------------------
+# _on_message_event() - stop_event guard
+# ---------------------------------------------------------------------------
+
+
+def test_on_message_event_skips_when_stop_event_set(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_on_message_event skips processing when stop_event is set."""
+    callback = AsyncMock()
+    channel._message_callback = callback
+    channel._loop = asyncio.new_event_loop()
+    channel._stop_event.set()
+
+    sender = MagicMock(User="34666666666", Server="s.whatsapp.net")
+    source = MagicMock(IsFromMe=False, IsGroup=False, Sender=sender, Chat=sender)
+    info = MagicMock(MessageSource=source, Timestamp=100, Pushname="Test")
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "conversation"
+    msg.conversation = "Hello"
+    event = MagicMock(Info=info, Message=msg)
+
+    channel._on_message_event(MagicMock(), event)
+
+    # Callback should not have been scheduled
+    assert callback.call_count == 0
+    channel._loop.close()
+
+
+# ---------------------------------------------------------------------------
+# _on_message_event() - no callback/loop
+# ---------------------------------------------------------------------------
+
+
+def test_on_message_event_skips_when_no_callback(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_on_message_event returns early when no callback is set."""
+    channel._message_callback = None
+    channel._loop = asyncio.new_event_loop()
+
+    event = MagicMock(Info=MagicMock(), Message=MagicMock())
+
+    channel._on_message_event(MagicMock(), event)
+
+    channel._loop.close()
+
+
+def test_on_message_event_skips_when_no_loop(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_on_message_event returns early when no loop is set."""
+    channel._message_callback = AsyncMock()
+    channel._loop = None
+
+    event = MagicMock(Info=MagicMock(), Message=MagicMock())
+
+    channel._on_message_event(MagicMock(), event)
+
+
+# ---------------------------------------------------------------------------
+# _collect_candidate_numbers() - edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_collect_candidate_numbers_handles_missing_info(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_collect_candidate_numbers returns empty set when Info is missing."""
+    event = MagicMock(spec=[])  # No Info attribute
+
+    candidates = channel._collect_candidate_numbers(event)
+
+    assert candidates == set()
+
+
+def test_collect_candidate_numbers_handles_missing_source(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_collect_candidate_numbers returns empty set when MessageSource is missing."""
+    info = MagicMock(spec=["MessageSource"])
+    info.MessageSource = None
+    event = MagicMock(Info=info)
+
+    candidates = channel._collect_candidate_numbers(event)
+
+    assert candidates == set()
+
+
+def test_collect_candidate_numbers_handles_exception(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_collect_candidate_numbers returns empty set on exception."""
+
+    # Create an event where accessing Info raises an exception
+    class BrokenEvent:
+        @property
+        def Info(self) -> None:  # type: ignore[override]
+            raise RuntimeError("broken")
+
+    event = BrokenEvent()
+
+    # Should not raise, returns empty set
+    candidates = channel._collect_candidate_numbers(event)
+
+    assert isinstance(candidates, set)
+
+
+# ---------------------------------------------------------------------------
+# _extract_sender_jid() - exception handling
+# ---------------------------------------------------------------------------
+
+
+def test_extract_sender_jid_handles_exception(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_sender_jid returns 'unknown' on exception."""
+
+    # Create an event where accessing Info raises an exception
+    class BrokenEvent:
+        @property
+        def Info(self) -> None:  # type: ignore[override]
+            raise RuntimeError("broken")
+
+    event = BrokenEvent()
+
+    result = channel._extract_sender_jid(event)
+
+    assert result == "unknown"
+
+
+# ---------------------------------------------------------------------------
+# _extract_text() - exception handling
+# ---------------------------------------------------------------------------
+
+
+def test_extract_text_handles_exception(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_text returns None on exception."""
+
+    # Create an event where accessing Message raises an exception
+    class BrokenEvent:
+        @property
+        def Message(self) -> None:  # type: ignore[override]
+            raise RuntimeError("broken")
+
+    event = BrokenEvent()
+
+    result = channel._extract_text(event)
+
+    assert result is None
+
+
+def test_extract_text_handles_value_error_on_has_field(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_text handles ValueError from HasField and still returns text."""
+    msg = MagicMock()
+    # HasField raises ValueError, but conversation attr exists
+    msg.HasField.side_effect = ValueError("no such field")
+    msg.conversation = "Fallback text"
+    event = MagicMock(Message=msg)
+
+    result = channel._extract_text(event)
+
+    assert result == "Fallback text"
+
+
+def test_extract_text_extended_text_fallback(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_extract_text handles ValueError for extendedTextMessage with fallback."""
+    msg = MagicMock()
+    msg.HasField.side_effect = lambda f: f == "extendedTextMessage"
+    msg.extendedTextMessage = MagicMock()
+    msg.extendedTextMessage.text = ""
+    # Make extendedTextMessage.text return empty, then use fallback
+    event = MagicMock(Message=msg)
+
+    result = channel._extract_text(event)
+
+    # Should return None since text is empty
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _restore_working_directory()
+# ---------------------------------------------------------------------------
+
+
+def test_restore_working_directory(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_restore_working_directory restores original directory when changed."""
+    original = Path.cwd()
+    channel._original_dir = original
+
+    # Method should work even if CWD hasn't changed
+    channel._restore_working_directory()
+
+    assert Path.cwd() == original
+
+
+# ---------------------------------------------------------------------------
+# _close_deduplication_db()
+# ---------------------------------------------------------------------------
+
+
+def test_close_deduplication_db(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_close_deduplication_db closes and removes _db attribute."""
+    mock_db = MagicMock()
+    channel._db = mock_db
+
+    channel._close_deduplication_db()
+
+    mock_db.close.assert_called_once()
+    assert not hasattr(channel, "_db")
+
+
+def test_close_deduplication_db_when_no_db(channel: "WhatsAppChannel") -> None:  # type: ignore[name-defined]
+    """_close_deduplication_db does nothing when _db doesn't exist."""
+    # Should not raise
+    channel._close_deduplication_db()
+
+
+# ---------------------------------------------------------------------------
+# ConfigurationError and ChannelError
+# ---------------------------------------------------------------------------
+
+
+def test_configuration_error() -> None:
+    """ConfigurationError can be raised and caught."""
+    from agntrick_whatsapp.channel_bridge import ConfigurationError
+
+    with pytest.raises(ConfigurationError):
+        raise ConfigurationError("Test error")
+
+
+def test_channel_error() -> None:
+    """ChannelError can be raised and caught."""
+    from agntrick_whatsapp.channel_bridge import ChannelError
+
+    with pytest.raises(ChannelError):
+        raise ChannelError("Test error")
+
+
+# ---------------------------------------------------------------------------
+# shutdown() - client disconnect
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_shutdown_disconnects_client(tmp_path: Path) -> None:
+    """shutdown() disconnects the client if it exists."""
+    from agntrick_whatsapp.channel_bridge import WhatsAppChannel
+
+    mock_client = MagicMock()
+    with patch("agntrick_whatsapp.channel_bridge.NewClient"):
+        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
+    ch._client = mock_client
+
+    await ch.shutdown()
+
+    mock_client.disconnect.assert_called_once()
+    assert ch._client is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_handles_disconnect_error(tmp_path: Path) -> None:
+    """shutdown() handles errors during client disconnect."""
+    from agntrick_whatsapp.channel_bridge import WhatsAppChannel
+
+    mock_client = MagicMock()
+    mock_client.disconnect.side_effect = RuntimeError("Disconnect failed")
+    with patch("agntrick_whatsapp.channel_bridge.NewClient"):
+        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
+    ch._client = mock_client
+
+    # Should not raise
+    await ch.shutdown()
+
+    assert ch._client is None
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_thread(tmp_path: Path) -> None:
+    """shutdown() waits for worker thread with timeout when thread is alive."""
+    from agntrick_whatsapp.channel_bridge import WhatsAppChannel
+
+    mock_client = MagicMock()
+    mock_client.disconnect = MagicMock()  # Non-blocking disconnect
+    with patch("agntrick_whatsapp.channel_bridge.NewClient"):
+        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
+
+    ch._client = mock_client
+    mock_thread = MagicMock()
+    mock_thread.is_alive.return_value = True  # Thread is alive, so join should be called
+    ch._thread = mock_thread
+
+    await ch.shutdown()
+
+    mock_thread.join.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# send() - error handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_raises_when_not_initialized(tmp_path: Path) -> None:
+    """send() raises ChannelError when client is None."""
+    from agntrick_whatsapp.channel_bridge import ChannelError, WhatsAppChannel
+
+    with patch("agntrick_whatsapp.channel_bridge.NewClient"):
+        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
+
+    ch._client = None
+    msg = MagicMock()
+    msg.recipient_id = "+34666666666"
+    msg.text = "Hello"
+
+    with pytest.raises(ChannelError, match="Channel not initialized"):
+        await ch.send(msg)
+
+
+# ---------------------------------------------------------------------------
+# listen() - error handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_listen_raises_when_not_initialized(tmp_path: Path) -> None:
+    """listen() raises ChannelError when client is None."""
+    from agntrick_whatsapp.channel_bridge import ChannelError, WhatsAppChannel
+
+    with patch("agntrick_whatsapp.channel_bridge.NewClient"):
+        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
+
+    ch._client = None
+
+    with pytest.raises(ChannelError, match="Channel not initialized"):
+        await ch.listen(AsyncMock())
+
+
+@pytest.mark.asyncio
+async def test_listen_warns_when_already_listening(tmp_path: Path) -> None:
+    """listen() warns and returns when already listening."""
+    from agntrick_whatsapp.channel_bridge import WhatsAppChannel
+
+    mock_client = MagicMock()
+    mock_client.event.return_value = lambda fn: fn
+    with patch("agntrick_whatsapp.channel_bridge.NewClient", return_value=mock_client):
+        ch = WhatsAppChannel(storage_path=tmp_path, allowed_contact="+34666666666")
+    ch._client = mock_client
+    ch._is_listening = True
+
+    # Should return immediately without error
+    await ch.listen(AsyncMock())
+
+    assert ch._is_listening

@@ -479,6 +479,12 @@ class WhatsAppChannel:
                     )
                     return
 
+        # Guard against race condition during shutdown - check BEFORE sending typing indicator
+        # to prevent orphaned typing states when dispatch is skipped
+        if self._stop_event.is_set():
+            logger.debug("Skipping message handling - shutdown in progress")
+            return
+
         # Send typing indicator (sync, runs on this thread)
         self._send_typing(sender_jid)
 
