@@ -367,7 +367,7 @@ agntrick-toolbox/
 │       │   ├── network.py     # ssh, openssl, httpie
 │       │   ├── search.py      # ripgrep, fd, fzf
 │       │   ├── communication.py # msmtp, notmuch
-│       │   ├── calendar.py    # calcurse, khal, taskwarrior
+│       │   ├── calendar.py    # calcurse, khal, remind, nb, taskwarrior, jrnl
 │       │   └── shell.py       # run_shell fallback
 │       └── schemas/
 │           ├── __init__.py
