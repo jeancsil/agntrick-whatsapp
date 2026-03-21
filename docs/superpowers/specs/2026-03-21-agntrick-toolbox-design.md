@@ -6,7 +6,7 @@
 
 ## Overview
 
-A Docker-based MCP server providing a curated CLI tool collection for LLM agents. Single container image with **60 curated tools** exposed via MCP protocol, with shell fallback for additional commands.
+A Docker-based MCP server providing a curated CLI tool collection for LLM agents. Single container image with **67 curated tools** exposed via MCP protocol, with shell fallback for additional commands.
 
 ## Goals
 
@@ -188,7 +188,7 @@ A Docker-based MCP server providing a curated CLI tool collection for LLM agents
 - Request validation
 
 **Exposed tools:**
-- 50-80 curated tools with full JSON schemas
+- 67 curated tools with full JSON schemas
 - 1 generic `run_shell` fallback tool
 
 ### 3. Tool Definition Format
@@ -495,7 +495,7 @@ await mcp.call_tool("run_shell", {
 ## Success Criteria
 
 - [ ] Single `docker-compose up -d` starts working toolbox
-- [ ] All 60 curated tools have valid schemas and working implementations
+- [ ] All 67 curated tools have valid schemas and working implementations
 - [ ] agntrick agent can discover and use tools via MCP
 - [ ] Shell fallback works for non-curated commands
 - [ ] Error messages are helpful and actionable
@@ -909,6 +909,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     silversearcher-ag \
     ugrep \
     mlocate \
+    fselect \
     # Dev/Utils
     curl \
     wget \
@@ -942,7 +943,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jrnl \
     # Build tools for Python packages
     build-essential \
-    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Install binary tools not in apt
@@ -1005,7 +1005,7 @@ logger = logging.getLogger(__name__)
 mcp = FastMCP("agntrick-toolbox")
 
 # Register all tools by category
-register_document_tools(mcp)      # 9 tools
+register_document_tools(mcp)      # 10 tools
 register_media_tools(mcp)         # 8 tools
 register_data_tools(mcp)          # 14 tools
 register_utils_tools(mcp)         # 10 tools
@@ -1131,7 +1131,7 @@ curl http://localhost:8080/health
 
 ## Tool Implementation Checklist
 
-For each of the 60 tools, implement following this pattern:
+For each of the 67 tools, implement following this pattern:
 
 - [ ] Create FastMCP `@mcp.tool()` decorated function
 - [ ] Validate all path inputs with `validate_workspace_path()`
