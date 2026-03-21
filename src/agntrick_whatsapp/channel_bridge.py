@@ -479,6 +479,12 @@ class WhatsAppChannel:
                     )
                     return
 
+        # Guard against race condition during shutdown - check BEFORE sending typing indicator
+        # to prevent orphaned typing states when dispatch is skipped
+        if self._stop_event.is_set():
+            logger.debug("Skipping message handling - shutdown in progress")
+            return
+
         # Send typing indicator (sync, runs on this thread)
         self._send_typing(sender_jid)
 
@@ -500,11 +506,6 @@ class WhatsAppChannel:
                 logger.error("Error in message callback: %s", exc, exc_info=True)
             finally:
                 await self._stop_typing(sender_jid)
-
-        # Guard against race condition during shutdown
-        if self._stop_event.is_set():
-            logger.debug("Skipping dispatch - shutdown in progress")
-            return
 
         asyncio.run_coroutine_threadsafe(_dispatch(), self._loop)
 

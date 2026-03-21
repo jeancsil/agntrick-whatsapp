@@ -104,6 +104,10 @@ def _make_invoke_agent_tool(router: "WhatsAppRouterAgent") -> Any:
         Returns:
             The agent's response as a string.
         """
+        # Normalize agent_name: strip whitespace and trailing punctuation
+        # (LLM may include commas from the tool description)
+        agent_name = agent_name.strip().rstrip(",.").lower()
+
         try:
             AgentRegistry.discover_agents()
             available = AgentRegistry.list_agents()
