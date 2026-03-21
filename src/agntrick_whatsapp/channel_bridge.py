@@ -152,11 +152,28 @@ class WhatsAppChannel:
         # Remove + if present (whatsapp expects format without +)
         return cleaned.lstrip("+")
 
+    @staticmethod
+    def _extract_server(jid_str: str) -> str:
+        """Extract the server component from a JID string.
+
+        Args:
+            jid_str: A JID string like ``"34666666666@s.whatsapp.net"`` or
+                     ``"118657162162293@lid"``.
+
+        Returns:
+            The server portion (e.g. ``"s.whatsapp.net"``, ``"lid"``).
+            Defaults to ``"s.whatsapp.net"`` when no ``@`` is present.
+        """
+        if "@" in jid_str:
+            return jid_str.split("@", 1)[1]
+        return "s.whatsapp.net"
+
     def _send_typing(self, jid: str) -> None:
         """Send typing indicator to a JID.
 
         Args:
-            jid: The JID to send typing indicator to.
+            jid: The full JID string (e.g. ``"34666@s.whatsapp.net"``
+                 or ``"118657162162293@lid"``).
         """
         if not self.typing_indicators or self._client is None:
             logger.debug(
@@ -166,10 +183,9 @@ class WhatsAppChannel:
             return
 
         try:
-            # Normalize JID: strip domain if present so build_jid() creates correct JID object
-            normalized_jid = jid.split("@")[0] if "@" in jid else jid
-            jid_obj = build_jid(normalized_jid)
-            # Send composing presence to show typing indicator
+            user = self._normalize_phone_number(jid)
+            server = self._extract_server(jid)
+            jid_obj = build_jid(user, server=server)
             self._client.send_chat_presence(
                 jid_obj,
                 ChatPresence.CHAT_PRESENCE_COMPOSING,
@@ -203,10 +219,9 @@ class WhatsAppChannel:
                 await asyncio.sleep(wait_time)
 
         try:
-            # Normalize JID
-            normalized_jid = jid.split("@")[0] if "@" in jid else jid
-            jid_obj = build_jid(normalized_jid)
-            # Send paused presence to stop typing indicator
+            user = self._normalize_phone_number(jid)
+            server = self._extract_server(jid)
+            jid_obj = build_jid(user, server=server)
             self._client.send_chat_presence(
                 jid_obj,
                 ChatPresence.CHAT_PRESENCE_PAUSED,
@@ -280,10 +295,213 @@ class WhatsAppChannel:
             conn.execute("VACUUM")
             conn.commit()
 
-    def _on_message_event(self, event: Any) -> None:
-        """Handle incoming message events from neonize."""
-        if self._message_callback:
-            self._message_callback(event)
+    def _extract_text(self, event: Any) -> str | None:
+        """Extract the text content from a neonize MessageEv protobuf.
+
+        Tries multiple paths since protobuf structure varies by message type.
+
+        Args:
+            event: A ``Neonize_pb2.Message`` protobuf instance.
+
+        Returns:
+            The plain-text string, or ``None`` if the message has no text.
+        """
+        try:
+            msg = getattr(event, "Message", None)
+            if msg is None:
+                return None
+
+            # Plain text message
+            try:
+                if msg.HasField("conversation") and msg.conversation:
+                    return str(msg.conversation)
+            except ValueError:
+                if getattr(msg, "conversation", None):
+                    return str(msg.conversation)
+
+            # Extended text (messages with link previews, quotes, etc.)
+            try:
+                if msg.HasField("extendedTextMessage") and msg.extendedTextMessage.text:
+                    return str(msg.extendedTextMessage.text)
+            except ValueError:
+                ext = getattr(msg, "extendedTextMessage", None)
+                if ext and getattr(ext, "text", None):
+                    return str(ext.text)
+
+            return None
+        except Exception as exc:
+            logger.warning("Failed to extract text from event: %s", exc)
+            return None
+
+    def _extract_sender_jid(self, event: Any) -> str:
+        """Return the raw sender JID string from a neonize MessageEv.
+
+        For 1-to-1 chats the sender equals the chat JID.  For groups the
+        ``Sender`` field identifies the individual participant.
+
+        Args:
+            event: A ``Neonize_pb2.Message`` protobuf instance.
+
+        Returns:
+            A JID string like ``"34666666666@s.whatsapp.net"``.
+        """
+        try:
+            info = getattr(event, "Info", None)
+            if info is None:
+                return "unknown"
+            source = getattr(info, "MessageSource", None)
+            if source is None:
+                return "unknown"
+
+            sender = getattr(source, "Sender", None)
+            if sender and getattr(sender, "User", None):
+                server = getattr(sender, "Server", "s.whatsapp.net")
+                return f"{sender.User}@{server}"
+
+            chat = getattr(source, "Chat", None)
+            if chat and getattr(chat, "User", None):
+                server = getattr(chat, "Server", "s.whatsapp.net")
+                return f"{chat.User}@{server}"
+
+            return "unknown"
+        except Exception as exc:
+            logger.warning("Failed to extract sender JID: %s", exc)
+            return "unknown"
+
+    def _collect_candidate_numbers(self, event: Any) -> set[str]:
+        """Collect all phone-number candidates from a message event.
+
+        WhatsApp may identify senders via LID (Linked ID) instead of a
+        phone-number-based JID.  To reliably match ``allowed_contact`` we
+        gather numbers from every JID field in the ``MessageSource``
+        (Sender, SenderAlt, Chat) and return the normalised set.
+
+        Args:
+            event: A ``Neonize_pb2.Message`` protobuf instance.
+
+        Returns:
+            A set of normalised phone-number strings (digits only).
+        """
+        numbers: set[str] = set()
+        try:
+            info = getattr(event, "Info", None)
+            if info is None:
+                return numbers
+            source = getattr(info, "MessageSource", None)
+            if source is None:
+                return numbers
+
+            for field in ("Sender", "SenderAlt", "Chat"):
+                jid = getattr(source, field, None)
+                if jid and getattr(jid, "User", None):
+                    server = getattr(jid, "Server", "")
+                    full = f"{jid.User}@{server}"
+                    normalised = self._normalize_phone_number(full)
+                    if normalised:
+                        numbers.add(normalised)
+        except Exception as exc:
+            logger.warning("Failed to collect candidate numbers: %s", exc)
+        return numbers
+
+    def _on_message_event(self, client: Any, event: Any) -> None:
+        """Handle incoming message events from neonize.
+
+        Runs on a neonize C-callback thread, so we:
+        1. Extract text and sender from the protobuf event.
+        2. Filter by ``allowed_contact``.
+        3. Fire typing indicator.
+        4. Schedule the async callback on the main event loop.
+
+        Args:
+            client: The neonize client instance (passed by the event system).
+            event: The ``Neonize_pb2.Message`` protobuf payload.
+        """
+        if not self._message_callback or not self._loop:
+            logger.debug(
+                "Event ignored: callback=%s, loop=%s",
+                self._message_callback is not None,
+                self._loop is not None,
+            )
+            return
+
+        info = getattr(event, "Info", None)
+
+        text = self._extract_text(event)
+        if not text:
+            msg_type = getattr(info, "Type", "?") if info else "?"
+            media_type = getattr(info, "MediaType", "") if info else ""
+            logger.debug("No text in event (type=%s, media=%s) — skipping", msg_type, media_type)
+            return
+
+        sender_jid = self._extract_sender_jid(event)
+        sender_number = self._normalize_phone_number(sender_jid)
+        push_name = getattr(info, "Pushname", "") if info else ""
+
+        logger.info("Incoming message from %s (%s): %s", push_name or sender_number, sender_jid, text[:80])
+
+        # Contact filter.
+        # Only process messages that originate from the self-chat (the
+        # account owner talking to themselves).  ``IsFromMe`` alone is
+        # not enough — it is True for *every* outgoing message, including
+        # those sent to groups and other people.  We additionally require
+        # that Chat.User == Sender.User (self-chat) and IsGroup is False.
+        if self.allowed_contact:
+            source = getattr(info, "MessageSource", None) if info else None
+            is_from_me = getattr(source, "IsFromMe", False) if source else False
+            is_group = getattr(source, "IsGroup", False) if source else False
+
+            if is_from_me and not is_group:
+                chat_jid = getattr(source, "Chat", None)
+                sender_obj = getattr(source, "Sender", None)
+                chat_user = getattr(chat_jid, "User", "") if chat_jid else ""
+                sender_user = getattr(sender_obj, "User", "") if sender_obj else ""
+
+                if chat_user and sender_user and chat_user == sender_user:
+                    logger.debug("Allowing self-chat message (Chat==Sender, IsFromMe=True)")
+                else:
+                    logger.debug(
+                        "Ignoring outgoing DM (Chat.User=%s != Sender.User=%s)",
+                        chat_user,
+                        sender_user,
+                    )
+                    return
+            elif is_group:
+                logger.debug("Ignoring group message (IsGroup=True)")
+                return
+            else:
+                candidates = self._collect_candidate_numbers(event)
+                if self.allowed_contact not in candidates:
+                    logger.info(
+                        "Filtered message from %s (candidates=%s, allowed=%s)",
+                        push_name or "unknown",
+                        candidates,
+                        self.allowed_contact,
+                    )
+                    return
+
+        # Send typing indicator (sync, runs on this thread)
+        self._send_typing(sender_jid)
+
+        # Build a normalised dict the router already understands
+        normalized: dict[str, Any] = {
+            "text": text,
+            "sender_id": sender_jid,
+            "sender_number": sender_number,
+            "timestamp": getattr(info, "Timestamp", 0) if info else 0,
+            "push_name": push_name,
+            "raw_event": event,
+        }
+
+        async def _dispatch() -> None:
+            try:
+                assert self._message_callback is not None
+                await self._message_callback(normalized)
+            except Exception as exc:
+                logger.error("Error in message callback: %s", exc, exc_info=True)
+            finally:
+                await self._stop_typing(sender_jid)
+
+        asyncio.run_coroutine_threadsafe(_dispatch(), self._loop)
 
     def _restore_working_directory(self) -> None:
         """Restore the original working directory."""
@@ -453,13 +671,9 @@ class WhatsAppChannel:
             # Handle both string messages and OutgoingMessage objects
             recipient_id = message.recipient_id if hasattr(message, "recipient_id") else message
 
-            # For LID contacts (@lid), build JID with lid server
-            if "@" in recipient_id:
-                phone = self._normalize_phone_number(recipient_id)
-                jid = build_jid(phone, server="lid")
-            else:
-                phone = self._normalize_phone_number(recipient_id)
-                jid = build_jid(phone)
+            user = self._normalize_phone_number(recipient_id)
+            server = self._extract_server(recipient_id)
+            jid = build_jid(user, server=server)
 
             if hasattr(message, "media_url") and message.media_url:
                 # Send media message
@@ -485,7 +699,8 @@ class WhatsAppChannel:
         called by the router when sending plain-text responses.
 
         Args:
-            recipient_id: The WhatsApp JID or phone number to send to.
+            recipient_id: The WhatsApp JID (e.g. ``"34666@s.whatsapp.net"``
+                          or ``"118657@lid"``) or a bare phone number.
             text: The text message to send.
 
         Raises:
@@ -498,8 +713,9 @@ class WhatsAppChannel:
             )
 
         try:
-            phone = self._normalize_phone_number(recipient_id)
-            jid = build_jid(phone)
+            user = self._normalize_phone_number(recipient_id)
+            server = self._extract_server(recipient_id)
+            jid = build_jid(user, server=server)
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._client.send_message, jid, text)
             logger.info(f"Message sent to {recipient_id}")

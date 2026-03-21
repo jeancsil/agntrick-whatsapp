@@ -22,13 +22,45 @@ logger = logging.getLogger(__name__)
 SCHEDULER_INTERVAL_SECONDS = 10
 
 
+# Default agent configuration
+DEFAULT_AGENT_NAME = "Aria"
+
+# MCP servers for default agent: web-forager (primary: search + fetch), fetch (backup)
+DEFAULT_MCP_SERVERS = ["web-forager", "fetch"]
+
 # System prompts
-DEFAULT_SYSTEM_PROMPT = """You are a helpful AI assistant communicating through WhatsApp.
-Be concise and friendly in your responses.
-Avoid overly long explanations.
-Use emojis occasionally to be more conversational.
-If you need to show code or data, use formatted text blocks.
-Focus on being helpful and direct.
+DEFAULT_SYSTEM_PROMPT = f"""You are {DEFAULT_AGENT_NAME}, a helpful AI assistant on WhatsApp.
+
+## Your Capabilities
+- Conversational chat and Q&A
+- Web search via DuckDuckGo
+- Fetch and read web pages
+- General knowledge and helpful responses
+
+## Your Personality
+- Concise and friendly (WhatsApp is mobile-first)
+- Occasional emojis are fine 🌟
+- Answer directly, don't over-explain
+- Use minimal formatting
+
+## When to Suggest Specialized Agents
+If the user asks for things better handled by specialized agents, suggest them:
+
+| Request | Suggest This Agent |
+|---------|-------------------|
+| Coding, debugging, code review | /developer |
+| News & current events monitoring | /news |
+| Learning topics in depth | /learning |
+| YouTube video operations | /youtube |
+| GitHub PR reviews | /github-pr-reviewer |
+| Local LLM (privacy/offline) | /ollama |
+
+Example: "For flight searches, try /kiwi"
+
+## Important
+- You are {DEFAULT_AGENT_NAME} - the user can call you this
+- Don't make up capabilities you don't have
+- When uncertain, offering to search or fetch is helpful
 """
 
 # Router initialization now accepts a Channel object directly
@@ -59,6 +91,7 @@ class WhatsAppRouterAgent:
         audio_transcriber_config: Any = None,
         agent: Any = None,
         db: Any = None,
+        max_conversation_tokens: int = 4000,
     ) -> None:
         self.channel = channel
         self._model_name = model_name
@@ -73,13 +106,24 @@ class WhatsAppRouterAgent:
         self._db = db
         self._note_repo: Any = None
         self._task_repo: Any = None
+        self._max_conversation_tokens = max_conversation_tokens
 
         # Message history
         self.message_history: List[Dict[str, Any]] = []
         self.conversations: Dict[str, Dict[str, Any]] = {}
 
+        # Cache for lazily-instantiated registered agents (e.g. /ollama)
+        self._registered_agents: Dict[str, Any] = {}
+
         # Command parser
         self._command_parser = CommandParser()
+
+        # Conversation management (uses same DB as notes/tasks)
+        self._conversation_manager: Any = None
+        if db is not None:
+            from .conversation import ConversationManager
+
+            self._conversation_manager = ConversationManager(db._db_path)
 
         logger.info(f"WhatsAppRouterAgent initialized with channel type: {type(channel).__name__}")
 
@@ -113,13 +157,17 @@ class WhatsAppRouterAgent:
             if hasattr(self.channel, "initialize"):
                 await self.channel.initialize()
 
-            # Set up MCP servers
-            self._mcp_servers = self._mcp_servers_override or ["fetch"]
+            # Set up MCP servers (use override if provided, otherwise use defaults)
+            self._mcp_servers = self._mcp_servers_override or DEFAULT_MCP_SERVERS
 
             # Initialize a generic agent if one was not injected
             if self._agent is None:
                 # Import lazily to avoid circular dependencies if agntrick is linked
                 from agntrick.agent import AgentBase  # type: ignore[import-untyped]
+                from agntrick.mcp.provider import MCPProvider  # type: ignore[import-untyped]
+
+                # Create MCP provider with web-forager (primary) and fetch (backup)
+                mcp_provider = MCPProvider(server_names=self._mcp_servers)
 
                 class DefaultRouterAgent(AgentBase):
                     @property
@@ -132,6 +180,7 @@ class WhatsAppRouterAgent:
                 self._agent = DefaultRouterAgent(
                     model_name=self._model_name,
                     temperature=self._temperature,
+                    mcp_provider=mcp_provider,
                 )
 
             # Start listening for messages in a supervised background task
@@ -186,20 +235,37 @@ class WhatsAppRouterAgent:
             if not message_text:
                 return
 
+            # Extract sender_id early for conversation threading
+            sender_id = self._get_sender_id(incoming)
+
             # Check for commands using the stored command parser
             command = self._command_parser.parse(message_text)
             logger.info(f"Parsed command: {command}")
 
-            # Handle commands
+            # Handle built-in commands; unrecognised slash-commands fall
+            # through to the LLM agent so prefixes like /ollama are
+            # forwarded as regular prompts.
             if command.command:
-                sender_id = self._get_sender_id(incoming)
                 response = await self._handle_command(command, sender_id)
-                await self._send_response(incoming, response)
-                return
+                if response is not None:
+                    await self._send_response(incoming, response)
+                    return
 
-            # For regular messages, process through the LLM agent
+            # Process through the LLM agent with conversation memory
             if self._agent:
-                result = await self._agent.run(message_text)
+                if self._conversation_manager:
+                    thread_id = self._conversation_manager.get_thread_id(sender_id, "default")
+                    logger.info(f"Running default agent with thread_id: {thread_id}")
+
+                    result = await self._agent.run_with_memory(
+                        message_text,
+                        thread_id=thread_id,
+                        max_tokens=self._max_conversation_tokens,
+                    )
+                else:
+                    logger.info("Running default agent with prompt: %s", message_text[:80])
+                    result = await self._agent.run(message_text)
+
                 await self._send_response(incoming, str(result))
             else:
                 response = f"Received (No LLM Agent): {message_text}"
@@ -280,15 +346,21 @@ class WhatsAppRouterAgent:
     # Command dispatch
     # ------------------------------------------------------------------
 
-    async def _handle_command(self, command: Any, sender_id: str) -> str:
+    async def _handle_command(self, command: Any, sender_id: str) -> str | None:
         """Handle a parsed command and return a response string.
+
+        Built-in commands (note, notes, remind, schedule, help) are handled
+        directly.  If the command name matches a registered agent in the
+        ``AgentRegistry`` (e.g. ``/ollama``), the prompt is forwarded to
+        that agent.  Otherwise ``None`` is returned so the caller can fall
+        through to the default LLM agent.
 
         Args:
             command: ParsedCommand with .command and .args attributes.
             sender_id: The sender's ID for scoping storage operations.
 
         Returns:
-            Response text to send back to the user.
+            Response text, or ``None`` if the command is not recognised.
         """
         cmd = command.command
         args = command.args
@@ -303,8 +375,112 @@ class WhatsAppRouterAgent:
             return await self._cmd_schedule(args, sender_id)
         elif cmd == "help":
             return self._cmd_help()
-        else:
-            return f"Unknown command: /{cmd}. Type /help for available commands."
+
+        # Check if the command maps to a registered agent (e.g. /ollama)
+        result = await self._try_registered_agent(cmd, args, sender_id)
+        if result is not None:
+            return result
+
+        logger.info("Unrecognised command /%s — forwarding to default LLM agent", cmd)
+        return None
+
+    async def _try_registered_agent(self, agent_name: str, args: list[str], sender_id: str) -> str | None:
+        """Try to dispatch a command to a registered agent.
+
+        Looks up ``agent_name`` in the ``AgentRegistry``.  If found,
+        instantiates (and caches) the agent and runs the prompt.
+
+        Args:
+            agent_name: The agent name to look up (e.g. ``"ollama"``).
+            args: The remaining arguments to join into a prompt.
+            sender_id: The sender's ID for conversation threading.
+
+        Returns:
+            The agent's response string, or ``None`` if no matching agent.
+        """
+        try:
+            from agntrick.registry import AgentRegistry  # type: ignore[import-untyped]
+
+            AgentRegistry.discover_agents()
+            available = AgentRegistry.list_agents()
+            logger.info("Registry contains agents: %s", available)
+
+            agent_cls = AgentRegistry.get(agent_name)
+
+            if agent_cls is None:
+                agent_cls = self._try_direct_import(agent_name)
+
+            if agent_cls is None:
+                logger.info("Agent '%s' not found in registry or by direct import", agent_name)
+                return None
+
+            logger.info("Routing to registered agent: %s (%s)", agent_name, agent_cls.__name__)
+
+            if agent_name not in self._registered_agents:
+                logger.info("Instantiating agent '%s' …", agent_name)
+                self._registered_agents[agent_name] = agent_cls()
+                logger.info("Agent '%s' instantiated OK", agent_name)
+
+            agent = self._registered_agents[agent_name]
+            prompt = " ".join(args)
+            if not prompt:
+                return f"Usage: /{agent_name} <your prompt>"
+
+            # Use conversation memory if available
+            if self._conversation_manager:
+                thread_id = self._conversation_manager.get_thread_id(sender_id, agent_name)
+                logger.info(f"Running agent '{agent_name}' with thread_id: {thread_id}")
+
+                result = await agent.run_with_memory(
+                    prompt,
+                    thread_id=thread_id,
+                    max_tokens=self._max_conversation_tokens,
+                )
+            else:
+                # Fallback for no conversation manager
+                logger.info("Running agent '%s' with prompt: %s", agent_name, prompt[:80])
+                result = await agent.run(prompt)
+
+            return str(result)
+        except Exception as exc:
+            logger.error("Error running registered agent '%s': %s", agent_name, exc, exc_info=True)
+            return f"Error from /{agent_name}: {exc}"
+
+    @staticmethod
+    def _try_direct_import(agent_name: str) -> type | None:
+        """Attempt to import an agent class directly by module name.
+
+        Fallback when ``AgentRegistry.discover_agents()`` silently fails
+        to import a module (its internal ``try/except`` swallows errors).
+
+        Args:
+            agent_name: The agent name, e.g. ``"ollama"``.
+
+        Returns:
+            The agent class, or ``None`` if import fails.
+        """
+        import importlib
+
+        module_path = f"agntrick.agents.{agent_name}"
+        try:
+            mod = importlib.import_module(module_path)
+            logger.info("Direct import of %s succeeded", module_path)
+        except Exception as exc:
+            logger.error("Direct import of %s FAILED: %s", module_path, exc, exc_info=True)
+            return None
+
+        class_map = {
+            name: obj
+            for name, obj in vars(mod).items()
+            if isinstance(obj, type) and name.lower().startswith(agent_name)
+        }
+        if class_map:
+            cls = next(iter(class_map.values()))
+            logger.info("Found agent class via direct import: %s", cls.__name__)
+            return cls  # type: ignore[return-value]
+
+        logger.warning("Module %s imported but no agent class found", module_path)
+        return None
 
     async def _cmd_note(self, args: list[str], sender_id: str) -> str:
         """Save a note for the sender.
@@ -414,13 +590,25 @@ class WhatsAppRouterAgent:
         Returns:
             A multi-line help string.
         """
-        return (
-            "Available commands:\n"
-            "/note <content> - Save a note\n"
-            "/notes - List your notes\n"
-            "/remind <time> <message> - Set a reminder "
-            "(e.g., /remind 'in 30 minutes' call doctor)\n"
-            "/schedule <cron> <message> - Schedule recurring message "
-            "(e.g., /schedule '0 9 * * *' Good morning)\n"
-            "/help - Show this help"
-        )
+        lines = [
+            "Available commands:",
+            "/note <content> - Save a note",
+            "/notes - List your notes",
+            "/remind <time> <message> - Set a reminder (e.g., /remind 'in 30 minutes' call doctor)",
+            "/schedule <cron> <message> - Schedule recurring message (e.g., /schedule '0 9 * * *' Good morning)",
+            "/help - Show this help",
+        ]
+
+        try:
+            from agntrick.registry import AgentRegistry  # type: ignore[import-untyped]
+
+            AgentRegistry.discover_agents()
+            agents = AgentRegistry.list_agents()
+            if agents:
+                lines.append("\nAgent commands:")
+                for name in sorted(agents):
+                    lines.append(f"/{name} <prompt> - Route to {name} agent")
+        except Exception:
+            pass
+
+        return "\n".join(lines)
